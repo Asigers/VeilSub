@@ -14,7 +14,7 @@ dependencies = [
 
 [project.optional-dependencies]
 google = [
-  "google-cloud-speech>=2.33,<3",
+  "google-cloud-speech>=2.40,<3",
   "google-cloud-translate>=3.21,<4"
 ]
 dev = [
