@@ -95,19 +95,11 @@ class GoogleSpeechStream(SpeechStream):
 
         assert self._audio is not None
 
+        sensitivity = speech_v2.StreamingRecognitionFeatures.EndpointingSensitivity
         endpointing = {
-            "standard": (
-                speech_v2.StreamingRecognitionFeatures.EndpointingSensitivity.
-                ENDPOINTING_SENSITIVITY_STANDARD
-            ),
-            "short": (
-                speech_v2.StreamingRecognitionFeatures.EndpointingSensitivity.
-                ENDPOINTING_SENSITIVITY_SHORT
-            ),
-            "supershort": (
-                speech_v2.StreamingRecognitionFeatures.EndpointingSensitivity.
-                ENDPOINTING_SENSITIVITY_SUPERSHORT
-            ),
+            "standard": sensitivity.ENDPOINTING_SENSITIVITY_STANDARD,
+            "short": sensitivity.ENDPOINTING_SENSITIVITY_SHORT,
+            "supershort": sensitivity.ENDPOINTING_SENSITIVITY_SUPERSHORT,
         }[self.settings.google_speech_endpointing]
 
         recognition_config = speech_v2.RecognitionConfig(
