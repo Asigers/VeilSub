@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import inspect
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -9,6 +10,7 @@ from app.models import AudioConfig, SpeechResult
 from app.providers.base import SpeechStream, Translator
 
 _MAX_AUDIO_REQUEST_BYTES = 14_000
+logger = logging.getLogger(__name__)
 
 
 class GoogleSpeechStream(SpeechStream):
@@ -72,9 +74,9 @@ class GoogleSpeechStream(SpeechStream):
                 self._stream_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._stream_task
-            except Exception:
-                # The error is surfaced through results(); close remains idempotent.
-                pass
+            except Exception as exc:  # noqa: BLE001
+                # Any provider failure was already published to results().
+                logger.debug("speech stream ended with an error during close", exc_info=exc)
 
         await self._close_client()
 
@@ -148,7 +150,9 @@ class GoogleSpeechStream(SpeechStream):
                     await self._result_queue.put(result)
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
+            # Google/gRPC can surface several provider-specific exception types.
+            # Keep those types behind the provider boundary and relay the failure.
             await self._result_queue.put(exc)
         finally:
             await self._result_queue.put(None)
