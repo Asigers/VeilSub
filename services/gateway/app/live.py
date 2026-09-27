@@ -19,7 +19,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
     settings = get_settings()
     speech = create_speech_stream(settings)
     translator = create_translator(settings)
-    pump_task: asyncio.Task[None] | None = None
+    tasks: set[asyncio.Task[None]] = set()
 
     try:
         start = SessionStart.model_validate_json(await websocket.receive_text())
@@ -65,25 +65,44 @@ async def live_subtitles(websocket: WebSocket) -> None:
                     ).model_dump()
                 )
 
-        pump_task = asyncio.create_task(pump_results())
+        async def receive_audio() -> None:
+            while True:
+                message = await websocket.receive()
+                if message.get("bytes") is not None:
+                    await speech.write(message["bytes"])
+                    continue
 
-        while True:
-            message = await websocket.receive()
-            if message.get("bytes") is not None:
-                await speech.write(message["bytes"])
-                continue
+                if message.get("text"):
+                    payload = json.loads(message["text"])
+                    if payload.get("type") == "session.stop":
+                        return
 
-            if message.get("text"):
-                payload = json.loads(message["text"])
-                if payload.get("type") == "session.stop":
-                    break
+        tasks = {
+            asyncio.create_task(pump_results(), name="subtitle-results"),
+            asyncio.create_task(receive_audio(), name="subtitle-audio"),
+        }
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+
+        for task in pending:
+            task.cancel()
+        for task in done:
+            await task
 
     except WebSocketDisconnect:
         pass
+    except Exception as exc:
+        with contextlib.suppress(Exception):
+            await websocket.send_json(
+                {
+                    "type": "session.error",
+                    "code": "stream_failed",
+                    "message": str(exc),
+                }
+            )
     finally:
         await speech.close()
-        if pump_task:
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(pump_task, timeout=2)
-            if not pump_task.done():
-                pump_task.cancel()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
