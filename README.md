@@ -2,7 +2,7 @@
 
 **Live subtitles for anything you watch.**
 
-VeilSub is a real-time subtitle layer for browser video. The first milestone captures the current browser tab's audio, streams it to a small gateway, transcribes it, translates stable segments, and renders bilingual subtitles over the page.
+VeilSub is a real-time subtitle layer for browser video. M0 captures the current browser tab's audio, streams it to a small gateway, transcribes it with Google Speech-to-Text V2 / Chirp 3, and renders source-language subtitles over the page.
 
 ## Architecture
 
@@ -18,7 +18,7 @@ VeilSub Gateway (FastAPI)
       |
       +--> Subtitle stabilizer
       |
-      +--> Translation provider
+      +--> Translation provider (disabled in M0)
       v
 WebSocket subtitle events
       |
@@ -26,7 +26,7 @@ WebSocket subtitle events
 Browser subtitle overlay
 ```
 
-The gateway uses provider interfaces. Local development defaults to mock providers so the end-to-end transport and overlay can be tested without cloud credentials. Production is intended to use Google Speech-to-Text V2 (Chirp 3) plus Google Cloud Translation NMT.
+The gateway uses provider interfaces. Local development defaults to mock speech and no translation. M0 production speech uses Google Speech-to-Text V2 with the `chirp_3` model.
 
 ## Repository layout
 
@@ -39,7 +39,7 @@ docs/                   Protocol and architecture decisions
 
 ## Quick start
 
-### 1. Start the gateway
+### 1. Start the gateway in mock mode
 
 ```bash
 cd services/gateway
@@ -65,29 +65,60 @@ curl http://127.0.0.1:8000/health
 5. Open a page that is playing audio and click the VeilSub extension.
 6. Click **Start subtitles**.
 
-With the default mock provider, the overlay will emit synthetic subtitles after it receives audio. This validates the browser-to-gateway path before cloud credentials are configured.
+With the default mock provider, the overlay emits synthetic source-language subtitles after it receives audio. This validates the browser-to-gateway path without cloud credentials.
 
-## Google provider
+## M0: Google Chirp 3 streaming
 
-Set these variables in `services/gateway/.env`:
+Install the Google provider extras:
+
+```bash
+cd services/gateway
+pip install -e '.[dev,google]'
+```
+
+Enable the Speech-to-Text API for your Google Cloud project and authenticate with Application Default Credentials.
+
+Set `services/gateway/.env`:
 
 ```env
 VEILSUB_SPEECH_PROVIDER=google
-VEILSUB_TRANSLATION_PROVIDER=google
+VEILSUB_TRANSLATION_PROVIDER=none
+
 GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=global
+GOOGLE_CLOUD_LOCATION=us
 GOOGLE_SPEECH_RECOGNIZER=_
+GOOGLE_SPEECH_ENDPOINTING=short
 ```
 
-Authenticate with Application Default Credentials. The Google speech adapter is intentionally isolated behind the provider interface so streaming rollover and provider replacement do not affect clients.
+Then run:
+
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+
+Open a Japanese video, start VeilSub, and the source subtitle should appear as Google returns sufficiently stable interim/final results.
+
+### Current M0 behavior
+
+- input: PCM16, 16 kHz, mono;
+- model: `chirp_3`;
+- source language: `ja-JP` by default in the extension;
+- interim results: enabled;
+- automatic punctuation: enabled;
+- profanity filtering: disabled;
+- endpointing: `short` by default;
+- each outbound Google audio request is capped below the API's per-message limit;
+- translation is intentionally disabled until M1.
+
+M0 does **not** yet implement seamless streaming rollover for long sessions. That belongs to M2.
 
 ## Initial milestones
 
-- **M0 — It hears:** tab audio -> WebSocket -> live source-language subtitle.
+- **M0 — It hears:** tab audio -> WebSocket -> Chirp 3 streaming ASR -> live Japanese subtitle.
 - **M1 — It translates:** stable source segments -> NMT -> bilingual overlay.
-- **M2 — It feels live:** stability thresholds, endpoint tuning, stream rollover, reconnect and latency metrics.
+- **M2 — It feels live:** stream rollover, reconnect, latency metrics, endpoint/stability tuning.
 - **M3 — Mobile:** reuse the same gateway protocol from Android/iOS capture adapters.
 
 ## Status
 
-Early scaffold. The protocol and provider boundaries are intentionally small so product behavior can evolve without rewriting the clients.
+M0 implementation is in place. Google credentials and a real Cloud project are required for end-to-end Chirp 3 validation.
