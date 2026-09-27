@@ -20,5 +20,10 @@ class SpeechStream(ABC):
 
 class Translator(ABC):
     @abstractmethod
-    async def translate(self, text: str, *, source_language: str, target_language: str) -> str:
-        ...
+    async def translate(
+        self,
+        text: str,
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> str | None: ...
