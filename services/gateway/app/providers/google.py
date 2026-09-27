@@ -74,7 +74,7 @@ class GoogleSpeechStream(SpeechStream):
                 self._stream_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._stream_task
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 # Any provider failure was already published to results().
                 logger.debug("speech stream ended with an error during close", exc_info=exc)
 
