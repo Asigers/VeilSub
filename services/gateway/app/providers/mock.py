@@ -43,6 +43,23 @@ class MockSpeechStream(SpeechStream):
         await self.queue.put(None)
 
 
+class NullTranslator(Translator):
+    async def translate(
+        self,
+        text: str,
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> None:
+        return None
+
+
 class MockTranslator(Translator):
-    async def translate(self, text: str, *, source_language: str, target_language: str) -> str:
+    async def translate(
+        self,
+        text: str,
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> str:
         return f"[mock {target_language}] {text}"
