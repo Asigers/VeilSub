@@ -90,7 +90,9 @@ async def live_subtitles(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         pass
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
+        # This is the protocol boundary: provider/validation failures become
+        # a stable session.error event instead of leaking implementation types.
         with contextlib.suppress(Exception):
             await websocket.send_json(
                 {
