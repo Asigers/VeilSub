@@ -19,16 +19,14 @@ class SessionStart(BaseModel):
 class SpeechResult(BaseModel):
     id: str
     text: str
-    stability: float = 0.0
     is_final: bool = False
     end_offset_ms: int | None = None
 
 
 class SubtitleEvent(BaseModel):
-    type: Literal["subtitle.partial", "subtitle.stable", "subtitle.final"]
+    type: Literal["subtitle.partial", "subtitle.final"]
     id: str
     source: str
     target: str | None = None
-    stability: float
     is_final: bool
     end_offset_ms: int | None = None
