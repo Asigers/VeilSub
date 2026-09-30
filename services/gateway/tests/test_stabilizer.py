@@ -2,16 +2,19 @@ from app.models import SpeechResult
 from app.subtitles import SubtitleStabilizer
 
 
-def test_stability_policy() -> None:
-    stabilizer = SubtitleStabilizer(0.75, 0.85)
-
-    assert stabilizer.decide(SpeechResult(id="1", text="x", stability=0.4)).show is False
-    assert stabilizer.decide(SpeechResult(id="2", text="x", stability=0.8)).translate is False
-    assert stabilizer.decide(SpeechResult(id="3", text="x", stability=0.9)).translate is True
-
-    final = stabilizer.decide(
-        SpeechResult(id="4", text="x", stability=0.0, is_final=True)
+def test_interim_is_shown_without_translation() -> None:
+    decision = SubtitleStabilizer().decide(
+        SpeechResult(id="1", text="そんなに見", is_final=False)
     )
-    assert final.show is True
-    assert final.translate is True
-    assert final.final is True
+    assert decision.show is True
+    assert decision.translate is False
+    assert decision.final is False
+
+
+def test_final_is_shown_and_translated() -> None:
+    decision = SubtitleStabilizer().decide(
+        SpeechResult(id="1", text="そんなに見ないで", is_final=True)
+    )
+    assert decision.show is True
+    assert decision.translate is True
+    assert decision.final is True
