@@ -123,6 +123,8 @@ async def live_subtitles(websocket: WebSocket) -> None:
             translation_tasks[segment_id] = task
 
             def cleanup(done: asyncio.Task[None]) -> None:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    done.result()
                 if translation_tasks.get(segment_id) is done:
                     translation_tasks.pop(segment_id, None)
 
