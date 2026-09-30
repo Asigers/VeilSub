@@ -270,6 +270,8 @@
 
     if (lines.childElementCount > 0) {
       showOverlay();
+    } else if (!parts(host).status.textContent) {
+      hideOverlay({ remove: false });
     }
   }
 
