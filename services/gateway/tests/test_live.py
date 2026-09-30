@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
 
-import app.live as live
+from app import live
 from app.main import app
 from app.models import AudioConfig, SpeechResult
 from app.providers.base import SpeechStream
