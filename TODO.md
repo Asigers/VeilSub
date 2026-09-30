@@ -43,7 +43,7 @@ M0 currently means **real-time source-language subtitles**. Translation is inten
 
 ## 1. Fix Google streaming-result segmentation
 
-**Current problem:** `GoogleSpeechStream._convert_response()` concatenates every
+**Previous problem (fixed):** `GoogleSpeechStream._convert_response()` concatenates every
 `StreamingRecognitionResult` in one Google response and assigns the minimum stability to
 the whole combined string.
 
@@ -71,7 +71,7 @@ Tasks:
 
 ## 2. Make subtitle segment IDs stable
 
-**Current problem:** every Google response gets a new ID such as `google-1`,
+**Previous problem (fixed):** every Google response gets a new ID such as `google-1`,
 `google-2`, etc. An evolving interim transcript is therefore treated as a new segment on
 every update.
 
@@ -104,7 +104,7 @@ This is required before subtitle history and M1 translation are implemented.
 
 ## 3. Fix capture-start acknowledgement
 
-**Current problem:** `background.js` reports `capture.start` as successful after it sends a
+**Previous problem (fixed):** `background.js` reports `capture.start` as successful after it sends a
 message to the offscreen document. It does **not** wait for:
 
 - `getUserMedia()` to succeed;
@@ -132,7 +132,7 @@ Tasks:
 
 ## 4. Track the actual captured tab
 
-**Current problem:** `stopCapture()` hides the overlay on the *currently active tab*, not
+**Previous problem (fixed):** `stopCapture()` hides the overlay on the *currently active tab*, not
 necessarily the tab that originally started VeilSub.
 
 Example:
@@ -199,7 +199,7 @@ Tasks:
 
 ## 7. Fix graceful shutdown / final-result flushing
 
-**Current problem:** the gateway uses `asyncio.FIRST_COMPLETED`. When the client sends
+**Previous problem (fixed):** the gateway uses `asyncio.FIRST_COMPLETED`. When the client sends
 `session.stop`, the audio receiver can finish first and the result pump is cancelled before
 the speech stream is closed and flushed. A final recognition result may therefore be lost.
 
