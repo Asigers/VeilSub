@@ -112,7 +112,12 @@ Current M0/P1 behavior:
 - dropped-audio duration is tracked in extension session state
 - runtime content-script injection recovers tabs opened before an extension reload
 - subtitle UI is isolated with Shadow DOM and uses a manual Popover for fullscreen top-layer rendering
-- translation is disabled until M1
+- source final subtitles are emitted immediately; translation never blocks ASR
+- translation updates use the same segment ID + revision and arrive asynchronously
+- per-session translation cache, timeout, concurrency limit and QPS guard are implemented
+- browser overlay keeps the previous final line plus the current segment
+- display modes: bilingual / translation only / source only
+- translation remains disabled unless `VEILSUB_TRANSLATION_PROVIDER=aliyun` is configured
 
 Official ASR docs:
 
@@ -133,6 +138,17 @@ ALIYUN_MT_ENDPOINT=mt.cn-hangzhou.aliyuncs.com
 
 The adapter uses the general-purpose `TranslateGeneral` API.
 
+Runtime defaults:
+
+```env
+VEILSUB_TRANSLATION_TIMEOUT_SECONDS=2.5
+VEILSUB_TRANSLATION_MAX_CONCURRENCY=4
+VEILSUB_TRANSLATION_MAX_QPS=20
+VEILSUB_TRANSLATION_CACHE_SIZE=256
+```
+
+Final source subtitles are shown immediately. The translated text arrives as a later update, so a slow or failed translation does not block speech recognition.
+
 Official docs:
 
 - https://help.aliyun.com/zh/machine-translation/developer-reference/api-alimt-2018-10-12-translategeneral
@@ -140,10 +156,10 @@ Official docs:
 ## Milestones
 
 - **M0 — It hears:** browser audio -> Alibaba Qwen Audio Streaming -> live Japanese subtitles.
-- **M1 — It translates:** final/stable source segments -> Alibaba NMT -> bilingual subtitles.
+- **M1 — It translates:** implemented in code; real-cloud translation validation remains.
 - **M2 — It feels live:** latency instrumentation, subtitle UX, ASR tuning, and production hardening.
 - **M3 — Mobile:** Android/iOS capture adapters reuse the same gateway protocol.
 
 ## Current status
 
-The production provider is standardized on Alibaba Cloud. Core P1 reliability handling is implemented; real-cloud validation is deferred while development proceeds to M1 translation.
+The production provider is standardized on Alibaba Cloud. Core P1 reliability and M1 asynchronous translation are implemented; real-cloud validation remains intentionally deferred.
