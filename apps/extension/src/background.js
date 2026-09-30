@@ -137,10 +137,9 @@ async function startCapture(config) {
     });
   } catch (error) {
     await stopOffscreenCapture().catch(() => undefined);
-    await hideOverlay(tab.id);
     await setCaptureState({
       status: 'error',
-      tabId: null,
+      tabId: tab.id,
       error: error instanceof Error ? error.message : String(error),
       startedAt: null,
     });
@@ -158,10 +157,9 @@ async function failCapturedSession(message) {
     error: null,
   });
   await stopOffscreenCapture().catch(() => undefined);
-  await hideOverlay(tabId);
   await setCaptureState({
     status: 'error',
-    tabId: null,
+    tabId,
     error: message,
     startedAt: null,
   });
