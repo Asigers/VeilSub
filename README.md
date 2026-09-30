@@ -97,7 +97,7 @@ Then start the gateway:
 uvicorn app.main:app --reload --port 8000
 ```
 
-Current M0 behavior:
+Current M0/P1 behavior:
 
 - PCM16 / 16 kHz / mono input
 - ~100 ms browser audio frames
@@ -106,6 +106,12 @@ Current M0 behavior:
 - final sentence keeps the same logical segment ID
 - heartbeat is enabled for long silent periods
 - sensitive-word filtering is not enabled
+- graceful Stop waits for the final ASR flush
+- Gateway disconnects trigger up to 5 bounded exponential-backoff reconnect attempts
+- audio is dropped instead of queued when disconnected or WebSocket backpressure exceeds 64 KiB
+- dropped-audio duration is tracked in extension session state
+- runtime content-script injection recovers tabs opened before an extension reload
+- subtitle UI is isolated with Shadow DOM and uses a manual Popover for fullscreen top-layer rendering
 - translation is disabled until M1
 
 Official ASR docs:
@@ -135,9 +141,9 @@ Official docs:
 
 - **M0 — It hears:** browser audio -> Alibaba Qwen Audio Streaming -> live Japanese subtitles.
 - **M1 — It translates:** final/stable source segments -> Alibaba NMT -> bilingual subtitles.
-- **M2 — It feels live:** reconnect, backpressure, latency metrics, fullscreen, long-session hardening.
+- **M2 — It feels live:** latency instrumentation, subtitle UX, ASR tuning, and production hardening.
 - **M3 — Mobile:** Android/iOS capture adapters reuse the same gateway protocol.
 
 ## Current status
 
-The production provider has been standardized on Alibaba Cloud. The next required validation is a real 20–30 minute Japanese-video session using a real Bailian workspace.
+The production provider is standardized on Alibaba Cloud. Core P1 reliability handling is implemented; real-cloud validation is deferred while development proceeds to M1 translation.
