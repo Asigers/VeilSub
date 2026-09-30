@@ -40,7 +40,16 @@ After that, clients send binary PCM16 little-endian audio frames, targeting abou
 }
 ```
 
-The client must not report capture success until `session.ready`.
+A normal client stop is acknowledged only after ASR final-result flushing:
+
+```json
+{
+  "type": "session.stopped"
+}
+```
+
+The client must not report capture success until `session.ready`, and should wait for
+`session.stopped` (with a short timeout fallback) before closing a normal session.
 
 ## Subtitle events
 
@@ -49,7 +58,7 @@ Interim:
 ```json
 {
   "type": "subtitle.partial",
-  "id": "aliyun-12",
+  "id": "<session-id>:aliyun-12",
   "source": "そんなに見",
   "target": null,
   "is_final": false,
@@ -62,7 +71,7 @@ Final:
 ```json
 {
   "type": "subtitle.final",
-  "id": "aliyun-12",
+  "id": "<session-id>:aliyun-12",
   "source": "そんなに見ないで",
   "target": null,
   "is_final": true,
@@ -77,11 +86,11 @@ Alibaba Qwen Audio Streaming returns interim updates for the current sentence an
 VeilSub maps that into stable IDs:
 
 ```text
-id=aliyun-12  "そんな"
-id=aliyun-12  "そんなに見"
-id=aliyun-12  "そんなに見ないで"
-id=aliyun-12  "そんなに見ないで" FINAL
-id=aliyun-13  "次の..."
+id=<session>:aliyun-12  "そんな"
+id=<session>:aliyun-12  "そんなに見"
+id=<session>:aliyun-12  "そんなに見ないで"
+id=<session>:aliyun-12  "そんなに見ないで" FINAL
+id=<session>:aliyun-13  "次の..."
 ```
 
 Rules:
@@ -89,9 +98,10 @@ Rules:
 1. same ID means replace the existing on-screen segment;
 2. final closes the segment;
 3. the next sentence gets a new ID;
-4. interim subtitles are displayed immediately;
-5. translation is attached only to final segments in the initial M1 design;
-6. `end_offset_ms` comes from Aliyun's final sentence `end_time`.
+4. the Gateway session ID prefixes provider segment IDs, preventing ID reuse after reconnect;
+5. interim subtitles are displayed immediately;
+6. translation is attached only to final segments in the initial M1 design;
+7. `end_offset_ms` comes from Aliyun's final sentence `end_time`.
 
 ## Design rules
 
