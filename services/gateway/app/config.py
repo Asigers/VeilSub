@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     veilsub_translation_provider: Literal["none", "mock", "aliyun"] = "none"
     veilsub_translation_timeout_seconds: float = 2.5
     veilsub_translation_max_concurrency: int = 4
+    veilsub_translation_max_qps: int = 20
     veilsub_translation_cache_size: int = 256
 
     dashscope_api_key: str = ""
