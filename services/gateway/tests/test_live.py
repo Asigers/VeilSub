@@ -102,6 +102,54 @@ class SlowTranslator(Translator):
         return "第一句"
 
 
+class RevisingSpeechStream(SpeechStream):
+    def __init__(self) -> None:
+        self.queue: asyncio.Queue[SpeechResult | None] = asyncio.Queue()
+        self.closed = False
+
+    async def start(self, *, language: str, audio: AudioConfig) -> None:
+        await self.queue.put(
+            SpeechResult(id="same", text="古い文", is_final=True, end_offset_ms=800)
+        )
+        await self.queue.put(
+            SpeechResult(id="same", text="新しい文", is_final=True, end_offset_ms=900)
+        )
+
+    async def write(self, chunk: bytes) -> None:
+        return None
+
+    def results(self) -> AsyncIterator[SpeechResult]:
+        return self._iterate()
+
+    async def _iterate(self) -> AsyncIterator[SpeechResult]:
+        while True:
+            item = await self.queue.get()
+            if item is None:
+                return
+            yield item
+
+    async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        await self.queue.put(None)
+
+
+class RevisionTranslator(Translator):
+    async def translate(
+        self,
+        text: str,
+        *,
+        source_language: str,
+        target_language: str,
+    ) -> str:
+        if text == "古い文":
+            await asyncio.sleep(0.1)
+            return "旧翻译"
+        await asyncio.sleep(0.01)
+        return "新翻译"
+
+
 def start_payload() -> str:
     return json.dumps(
         {
@@ -183,3 +231,39 @@ def test_slow_translation_does_not_block_next_asr_event(monkeypatch) -> None:
     assert stopped["type"] == "session.stopped"
     assert stopped["translation_calls"] == 1
     assert stopped["translation_characters"] == len("第一文です")
+
+
+
+def test_obsolete_translation_cannot_overwrite_new_revision(monkeypatch) -> None:
+    speech = RevisingSpeechStream()
+
+    monkeypatch.setattr(
+        live,
+        "get_settings",
+        lambda: Settings(veilsub_translation_provider="mock"),
+    )
+    monkeypatch.setattr(live, "create_speech_stream", lambda _settings: speech)
+    monkeypatch.setattr(live, "create_translator", lambda _settings: RevisionTranslator())
+
+    with TestClient(app).websocket_connect("/v1/live") as websocket:
+        websocket.send_text(start_payload())
+        websocket.receive_json()  # session.ready
+
+        revision_one = websocket.receive_json()
+        revision_two = websocket.receive_json()
+        translation = websocket.receive_json()
+
+        websocket.send_text(json.dumps({"type": "session.stop"}))
+        websocket.receive_json()  # session.stopped
+
+    assert revision_one["type"] == "subtitle.final"
+    assert revision_one["revision"] == 1
+    assert revision_one["source"] == "古い文"
+
+    assert revision_two["type"] == "subtitle.final"
+    assert revision_two["revision"] == 2
+    assert revision_two["source"] == "新しい文"
+
+    assert translation["type"] == "subtitle.translation"
+    assert translation["revision"] == 2
+    assert translation["target"] == "新翻译"
