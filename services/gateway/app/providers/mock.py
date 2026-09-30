@@ -24,7 +24,6 @@ class MockSpeechStream(SpeechStream):
                 SpeechResult(
                     id=f"mock-{self.segment}",
                     text=f"モック字幕 {self.segment}",
-                    stability=1.0,
                     is_final=True,
                 )
             )
