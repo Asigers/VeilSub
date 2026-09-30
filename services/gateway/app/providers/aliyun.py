@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
