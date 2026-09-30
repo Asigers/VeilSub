@@ -1,22 +1,34 @@
 const gateway = document.querySelector('#gateway');
 const source = document.querySelector('#source');
 const target = document.querySelector('#target');
+const displayMode = document.querySelector('#displayMode');
 const status = document.querySelector('#status');
 const startButton = document.querySelector('#start');
 const stopButton = document.querySelector('#stop');
 
-const saved = await chrome.storage.local.get(['gateway', 'sourceLanguage', 'targetLanguage']);
+const saved = await chrome.storage.local.get([
+  'gateway',
+  'sourceLanguage',
+  'targetLanguage',
+  'displayMode',
+]);
+
 gateway.value = saved.gateway || gateway.value;
 source.value = saved.sourceLanguage || source.value;
 target.value = saved.targetLanguage || target.value;
+displayMode.value = saved.displayMode || 'bilingual';
 
 function renderState(state) {
   const labels = {
     idle: 'Idle',
     starting: 'Starting…',
-    capturing: 'Capturing current tab',
+    capturing: state?.droppedAudioMs
+      ? `Capturing · dropped ${Math.round(state.droppedAudioMs)} ms`
+      : 'Capturing current tab',
     stopping: 'Stopping…',
-    reconnecting: 'Reconnecting…',
+    reconnecting: state?.reconnectAttempt
+      ? `Reconnecting · attempt ${state.reconnectAttempt}`
+      : 'Reconnecting…',
     error: state?.error || 'Capture failed',
   };
 
@@ -39,13 +51,24 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   renderState(changes.captureState.newValue);
 });
 
+displayMode.addEventListener('change', async () => {
+  await chrome.storage.local.set({ displayMode: displayMode.value });
+});
+
 startButton.addEventListener('click', async () => {
   const config = {
     gateway: gateway.value.trim(),
     sourceLanguage: source.value.trim(),
     targetLanguage: target.value.trim(),
+    displayMode: displayMode.value,
   };
-  await chrome.storage.local.set(config);
+
+  await chrome.storage.local.set({
+    gateway: config.gateway,
+    sourceLanguage: config.sourceLanguage,
+    targetLanguage: config.targetLanguage,
+    displayMode: config.displayMode,
+  });
 
   renderState({ status: 'starting' });
   const response = await chrome.runtime.sendMessage({ type: 'capture.start', config });
