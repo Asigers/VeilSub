@@ -3,7 +3,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import dashscope
-from dashscope.audio.asr import Recognition, RecognitionCallback, RecognitionResult
+import dashscope.audio.asr
 
 from app.config import Settings
 from app.models import AudioConfig, SpeechResult
@@ -16,20 +16,20 @@ _REGION_HOSTS = {
 }
 
 
-class _RecognitionCallback(RecognitionCallback):
+class _RecognitionCallback(dashscope.audio.asr.RecognitionCallback):
     def __init__(self, owner: "AliyunSpeechStream") -> None:
         self.owner = owner
 
     def on_open(self) -> None:
         return None
 
-    def on_event(self, result: RecognitionResult) -> None:
+    def on_event(self, result: dashscope.audio.asr.RecognitionResult) -> None:
         self.owner._handle_event(result)
 
     def on_complete(self) -> None:
         self.owner._finish_results()
 
-    def on_error(self, result: RecognitionResult) -> None:
+    def on_error(self, result: dashscope.audio.asr.RecognitionResult) -> None:
         message = getattr(result, "message", None) or "Aliyun ASR stream failed"
         self.owner._fail_results(RuntimeError(message))
 
@@ -43,7 +43,7 @@ class AliyunSpeechStream(SpeechStream):
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._result_queue: asyncio.Queue[SpeechResult | Exception | None] = asyncio.Queue()
-        self._recognition: Recognition | None = None
+        self._recognition: dashscope.audio.asr.Recognition | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._segment_sequence = 0
         self._active_segment_id: str | None = None
@@ -71,7 +71,7 @@ class AliyunSpeechStream(SpeechStream):
         dashscope.base_websocket_api_url = f"wss://{host}/api-ws/v1/inference"
 
         callback = _RecognitionCallback(self)
-        self._recognition = Recognition(
+        self._recognition = dashscope.audio.asr.Recognition(
             model=self.settings.aliyun_asr_model,
             format="pcm",
             sample_rate=audio.sample_rate_hz,
@@ -105,7 +105,7 @@ class AliyunSpeechStream(SpeechStream):
             finally:
                 self._finish_results()
 
-    def _handle_event(self, result: RecognitionResult) -> None:
+    def _handle_event(self, result: dashscope.audio.asr.RecognitionResult) -> None:
         sentence = result.get_sentence()
         if not isinstance(sentence, dict):
             return
@@ -114,7 +114,7 @@ class AliyunSpeechStream(SpeechStream):
         if not text:
             return
 
-        is_final = RecognitionResult.is_sentence_end(sentence)
+        is_final = dashscope.audio.asr.RecognitionResult.is_sentence_end(sentence)
         if self._active_segment_id is None:
             self._active_segment_id = self._new_segment_id()
 
