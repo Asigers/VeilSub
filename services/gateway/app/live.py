@@ -20,6 +20,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
     settings = get_settings()
     speech = create_speech_stream(settings)
     translator = create_translator(settings)
+    translation_enabled = settings.veilsub_translation_provider != "none"
     translation = TranslationService(
         translator,
         timeout_seconds=settings.veilsub_translation_timeout_seconds,
@@ -149,7 +150,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
                     ).model_dump()
                 )
 
-                if decision.translate and result.text:
+                if translation_enabled and decision.translate and result.text:
                     schedule_translation(
                         segment_id=segment_id,
                         revision=revision,
