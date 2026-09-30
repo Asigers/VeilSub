@@ -62,6 +62,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
                         target=target,
                         stability=result.stability,
                         is_final=result.is_final,
+                        end_offset_ms=result.end_offset_ms,
                     ).model_dump()
                 )
 
