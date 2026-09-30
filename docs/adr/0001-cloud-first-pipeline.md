@@ -24,7 +24,7 @@ subtitle events
 
 The browser sends PCM16 16 kHz mono audio to the Gateway. The Gateway owns all cloud credentials and provider lifecycle.
 
-The project deliberately does **not** keep a second production cloud provider. Google Speech-to-Text and Google Cloud Translation support were removed to avoid duplicate configuration, tests, SDK upgrades, provider-specific semantics, and operational paths.
+The project deliberately keeps a single production cloud provider to avoid duplicate configuration, tests, SDK upgrades, provider-specific semantics, and operational paths.
 
 ## ASR choices
 
@@ -49,7 +49,5 @@ Translation is intentionally disabled in M0 and enabled in M1 after the ASR path
 
 - one cloud vendor to configure and monitor;
 - no cross-provider behavior normalization;
-- no Google SDK dependencies;
-- no Google-specific stream rollover logic;
 - Bailian API key/workspace and Machine Translation AccessKey credentials remain separate;
 - browser/mobile clients remain provider-agnostic because they only speak VeilSub's WebSocket protocol.
