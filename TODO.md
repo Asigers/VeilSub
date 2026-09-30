@@ -47,48 +47,51 @@ CI validates the provider adapter without using real credentials.
 
 # P1 — Reliability
 
+**Implementation status:** core P1 reliability code is complete. Real-browser/cloud E2E validation is intentionally deferred.
+
 ## 2. Graceful stop / final-result flushing
 
-Current gateway still uses `asyncio.FIRST_COMPLETED`. On normal stop, the result pump can be cancelled before the provider fully flushes its final sentence.
+The Gateway now treats user stop as a graceful half-close and waits for provider flush before acknowledging the stop.
 
-- [ ] stop accepting new browser audio first
-- [ ] call ASR `stop()`
-- [ ] drain the final callback/result
-- [ ] close the WebSocket only after final results are delivered
-- [ ] distinguish user stop from provider/network failure
+- [x] stop accepting new browser audio first
+- [x] call ASR `stop()`
+- [x] drain the final callback/result
+- [x] send `session.stopped` only after final results are delivered
+- [x] distinguish user stop from provider/network failure
+- [x] integration-test `session.ready -> final subtitle -> session.stopped` ordering
 
 ## 3. WebSocket reconnect and ASR recovery
 
-- [ ] handle browser WebSocket `error` and `close`
-- [ ] bounded exponential backoff
-- [ ] surface `reconnecting` state
-- [ ] rebuild the Bailian ASR session after reconnect
-- [ ] prevent duplicate subtitle segments
-- [ ] cap retry budget
+- [x] handle browser WebSocket `error` and `close`
+- [x] bounded exponential backoff
+- [x] surface `reconnecting` state
+- [x] rebuild the Bailian ASR session after reconnect
+- [x] prevent duplicate subtitle segments
+- [x] cap retry budget
 
 Alibaba recommends heartbeat for silence and client-side reconnect for connection failures.
 
 ## 4. Browser audio backpressure
 
-- [ ] monitor `WebSocket.bufferedAmount`
-- [ ] bound queued client audio
-- [ ] prefer dropping stale audio over accumulating latency
-- [ ] expose dropped-audio metrics
+- [x] monitor `WebSocket.bufferedAmount`
+- [x] bound queued client audio
+- [x] prefer dropping stale audio over accumulating latency
+- [x] expose dropped-audio metrics
 
 ## 5. Fullscreen subtitles
 
-- [ ] handle `fullscreenchange`
-- [ ] move overlay into the fullscreen element when required
-- [ ] restore it after fullscreen exits
-- [ ] test native HTML5 fullscreen and common custom players
+- [x] handle `fullscreenchange`
+- [x] render overlay as a manual Popover in the browser top layer
+- [x] refresh Popover top-layer order on fullscreen enter/exit
+- [ ] E2E-test native HTML5 fullscreen and common custom players
 
 ## 6. Robust overlay injection
 
-- [ ] handle tabs opened before extension reload/install
-- [ ] dynamically inject overlay when content script is absent
-- [ ] isolate styles with Shadow DOM
-- [ ] support SPA navigation
-- [ ] remove stale overlay state cleanly
+- [x] handle tabs opened before extension reload/install
+- [x] dynamically inject overlay when content script is absent
+- [x] isolate styles with Shadow DOM
+- [x] support SPA navigation
+- [x] remove stale overlay state cleanly
 
 ---
 
@@ -189,7 +192,7 @@ Validate before changing:
 - [x] persistent Start / Stop state
 - [x] basic connection/capture state
 - [ ] ASR status
-- [ ] reconnecting state
+- [x] reconnecting state
 - [ ] source language selector
 - [ ] target language selector
 - [ ] translated-only mode
@@ -204,10 +207,10 @@ Validate before changing:
 
 - [ ] draggable position
 - [ ] safe-area handling
-- [ ] long-line wrapping
-- [ ] Japanese/Chinese font fallback
+- [x] long-line wrapping
+- [x] Japanese/Chinese font fallback
 - [ ] high-DPI rendering
-- [ ] fullscreen support
+- [x] fullscreen support
 - [ ] avoid covering player controls
 - [ ] accessibility
 
@@ -248,11 +251,11 @@ Before exposing a hosted Gateway publicly:
 
 ## 18. Gateway integration tests
 
-- [ ] WebSocket session-start test
+- [x] WebSocket session-start/ready test
 - [ ] binary audio frame test
-- [ ] subtitle event test
+- [x] final subtitle event test
 - [ ] ASR failure -> `session.error`
-- [ ] graceful stop test
+- [x] graceful stop/flush ordering test
 - [ ] reconnect tests
 - [x] Aliyun interim/final segment-ID tests
 - [x] Aliyun `ja -> zh` translation adapter test
