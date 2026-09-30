@@ -8,15 +8,17 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     veilsub_env: str = "development"
-    veilsub_speech_provider: Literal["mock", "google"] = "mock"
-    veilsub_translation_provider: Literal["none", "mock", "google"] = "none"
-    veilsub_partial_threshold: float = 0.75
-    veilsub_translate_threshold: float = 0.85
+    veilsub_speech_provider: Literal["mock", "aliyun"] = "mock"
+    veilsub_translation_provider: Literal["none", "mock", "aliyun"] = "none"
 
-    google_cloud_project: str = ""
-    google_cloud_location: str = "us"
-    google_speech_recognizer: str = "_"
-    google_speech_endpointing: Literal["standard", "short", "supershort"] = "short"
+    dashscope_api_key: str = ""
+    aliyun_bailian_workspace_id: str = ""
+    aliyun_bailian_region: Literal["cn-beijing", "ap-southeast-1"] = "cn-beijing"
+    aliyun_asr_model: str = "qwen-audio-3.0-asr-flash-streaming"
+
+    alibaba_cloud_access_key_id: str = ""
+    alibaba_cloud_access_key_secret: str = ""
+    aliyun_mt_endpoint: str = "mt.cn-hangzhou.aliyuncs.com"
 
 
 @lru_cache
