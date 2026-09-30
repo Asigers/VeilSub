@@ -6,7 +6,6 @@ VeilSub now has a single production cloud stack:
 - Translation: Alibaba Cloud Machine Translation `TranslateGeneral`
 - Development only: mock providers
 
-Google support has been removed completely to avoid dual-provider maintenance.
 
 ## Current baseline
 
