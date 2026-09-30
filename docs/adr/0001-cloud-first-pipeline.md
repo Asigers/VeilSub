@@ -1,32 +1,55 @@
-# ADR 0001: Cloud-first subtitle pipeline
+# ADR 0001: Alibaba Cloud single-provider pipeline
 
 Status: accepted
 
 ## Decision
 
-VeilSub uses:
+VeilSub uses one production cloud stack:
 
 ```text
 platform capture adapter
         ->
 VeilSub WebSocket gateway
         ->
-streaming ASR
+Alibaba Cloud Bailian
+qwen-audio-3.0-asr-flash-streaming
         ->
-subtitle stabilizer
+subtitle segment state
         ->
-NMT
+Alibaba Cloud Machine Translation
+TranslateGeneral
         ->
 subtitle events
 ```
 
-The first production provider pair is Google Speech-to-Text V2 / Chirp 3 and Google Cloud Translation NMT. Provider implementations remain isolated behind internal interfaces.
+The browser sends PCM16 16 kHz mono audio to the Gateway. The Gateway owns all cloud credentials and provider lifecycle.
 
-The browser client sends PCM16 16 kHz mono audio. The gateway owns cloud credentials, provider configuration, session state, translation triggering, retries, and future stream rollover.
+The project deliberately does **not** keep a second production cloud provider. Google Speech-to-Text and Google Cloud Translation support were removed to avoid duplicate configuration, tests, SDK upgrades, provider-specific semantics, and operational paths.
+
+## ASR choices
+
+- Model: `qwen-audio-3.0-asr-flash-streaming`
+- Default region: `cn-beijing`
+- SDK: DashScope Python SDK
+- Audio format: PCM / 16 kHz / mono
+- Language hint: Japanese (`ja`)
+- Segmentation: VAD, `semantic_punctuation_enabled=False`
+- Heartbeat: enabled
+- Sensitive-word filtering: not configured, therefore disabled for the real-time model
+
+Aliyun returns one sentence object per callback. `end_time != None` means that sentence is final. VeilSub keeps the same logical segment ID from interim revisions through finalization.
+
+## Translation choices
+
+Alibaba Cloud Machine Translation `TranslateGeneral` is the only planned production translation backend.
+
+Translation is intentionally disabled in M0 and enabled in M1 after the ASR path is validated.
 
 ## Consequences
 
-- clients remain thin;
-- no model installation is required on user devices;
-- gateway cost controls and reconnect logic are production requirements;
-- providers can be replaced without changing browser/mobile clients.
+- one cloud vendor to configure and monitor;
+- no cross-provider behavior normalization;
+- no Google SDK dependencies;
+- no Google-specific stream rollover logic;
+- Bailian API key/workspace and Machine Translation AccessKey credentials remain separate;
+- browser/mobile clients remain provider-agnostic because they only speak VeilSub's WebSocket protocol.
