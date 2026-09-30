@@ -24,6 +24,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
         translator,
         timeout_seconds=settings.veilsub_translation_timeout_seconds,
         max_concurrency=settings.veilsub_translation_max_concurrency,
+        max_qps=settings.veilsub_translation_max_qps,
         cache_size=settings.veilsub_translation_cache_size,
     )
 
