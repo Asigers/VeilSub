@@ -24,8 +24,9 @@ class SpeechResult(BaseModel):
 
 
 class SubtitleEvent(BaseModel):
-    type: Literal["subtitle.partial", "subtitle.final"]
+    type: Literal["subtitle.partial", "subtitle.final", "subtitle.translation"]
     id: str
+    revision: int
     source: str
     target: str | None = None
     is_final: bool
