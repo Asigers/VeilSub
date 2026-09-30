@@ -25,6 +25,9 @@ Already implemented:
 - [x] Google Speech-to-Text V2 / Chirp 3 streaming adapter
 - [x] interim / final ASR result flow
 - [x] basic subtitle stability policy
+- [x] independent Google result parsing + stable segment IDs
+- [x] truthful capture/session lifecycle state
+- [x] captured-tab lifecycle tracking
 - [x] source-language subtitle overlay
 - [x] mock speech provider for local development
 - [x] CI: Python lint/tests + extension JavaScript syntax checks
@@ -35,6 +38,8 @@ M0 currently means **real-time source-language subtitles**. Translation is inten
 ---
 
 # P0 — Correctness / core-path fixes
+
+**Code status:** P0 code fixes are complete and CI is green. The only remaining P0 item is real-cloud / real-media M0 validation.
 
 ## 1. Fix Google streaming-result segmentation
 
@@ -54,13 +59,13 @@ References:
 
 Tasks:
 
-- [ ] process each Google `StreamingRecognitionResult` independently
-- [ ] preserve each result's own `is_final`, `stability`, and `result_end_offset`
-- [ ] do not merge a final result and following interim result into one subtitle event
-- [ ] add tests for a response containing:
+- [x] process each Google `StreamingRecognitionResult` independently
+- [x] preserve each result's own `is_final`, `stability`, and `result_end_offset`
+- [x] do not merge a final result and following interim result into one subtitle event
+- [x] add tests for a response containing:
   - one high-stability interim result + one low-stability interim result
   - one final result + one interim result
-- [ ] ensure a stable prefix can be shown even while the next phrase is unstable
+- [x] ensure a stable prefix can be shown even while the next phrase is unstable
 
 ---
 
@@ -87,11 +92,11 @@ The same logical segment should keep the same ID until it becomes final.
 
 Tasks:
 
-- [ ] introduce a segment / utterance state machine
-- [ ] keep one ID across interim revisions of the same segment
-- [ ] increment the logical segment only after finalization
-- [ ] include timing metadata such as `result_end_offset` in the internal model
-- [ ] define replacement semantics in `docs/protocol.md`
+- [x] introduce a segment / utterance state machine
+- [x] keep one ID across interim revisions of the same segment
+- [x] increment the logical segment only after finalization
+- [x] include timing metadata such as `result_end_offset` in the internal model
+- [x] define replacement semantics in `docs/protocol.md`
 
 This is required before subtitle history and M1 translation are implemented.
 
@@ -112,16 +117,16 @@ An offscreen error is currently only printed with `console.error`, while the pop
 
 Tasks:
 
-- [ ] add explicit capture lifecycle states:
+- [x] add explicit capture lifecycle states:
   - `idle`
   - `starting`
   - `capturing`
   - `reconnecting`
   - `error`
-- [ ] make the offscreen document acknowledge startup success/failure
-- [ ] only report success after gateway `session.ready`
-- [ ] surface WebSocket / ASR errors to the popup and overlay
-- [ ] persist current state so reopening the popup shows the real session state
+- [x] make the offscreen document acknowledge startup success/failure
+- [x] only report success after gateway `session.ready`
+- [x] surface WebSocket / ASR errors to the popup and overlay
+- [x] persist current state so reopening the popup shows the real session state
 
 ---
 
@@ -143,11 +148,11 @@ The same issue can appear when starting a new capture while an old capture is ac
 
 Tasks:
 
-- [ ] store `capturedTabId`
-- [ ] always hide / clean up the overlay on the captured tab
-- [ ] stop the previous session before switching capture to another tab
-- [ ] handle captured-tab close / navigation / replacement
-- [ ] consider `chrome.tabCapture.onStatusChanged` as the source of capture truth
+- [x] store `capturedTabId`
+- [x] always hide / clean up the overlay on the captured tab
+- [x] stop the previous session before switching capture to another tab
+- [x] handle captured-tab close / navigation / replacement
+- [x] consider `chrome.tabCapture.onStatusChanged` as the source of capture truth
 
 Reference:
 
@@ -167,7 +172,7 @@ finished:
 - [ ] verify no obvious audio-speed or sample-rate distortion
 - [ ] record first-subtitle latency and final-subtitle latency
 - [ ] test silence, music, background noise, and short Japanese utterances
-- [ ] document any required Chrome / Edge minimum version
+- [x] document any required Chrome / Edge minimum version
 
 ---
 
@@ -397,8 +402,8 @@ Do not add a second ASR model until the Chirp 3 baseline has been measured.
 
 ## 19. Extension state and controls
 
-- [ ] persistent Start / Stop state
-- [ ] connection indicator
+- [x] persistent Start / Stop state
+- [x] basic connection / capture-state indicator
 - [ ] ASR status
 - [ ] reconnecting / error status
 - [ ] source language selector
@@ -473,7 +478,7 @@ Before public deployment:
 - [ ] provider failure -> `session.error` test
 - [ ] graceful stop test
 - [ ] reconnect / rollover tests
-- [ ] multi-result Google response tests
+- [x] multi-result Google response tests
 
 ---
 
@@ -546,11 +551,11 @@ Keep the project focused on real-time subtitles.
 
 ```text
 P0
-1. Real M0 cloud validation
-2. Correct Google multi-result parsing
-3. Stable subtitle segment IDs
-4. Accurate capture/session state
-5. Correct captured-tab lifecycle
+1. Real M0 cloud validation  <- remaining
+2. Correct Google multi-result parsing  [done]
+3. Stable subtitle segment IDs  [done]
+4. Accurate capture/session state  [done]
+5. Correct captured-tab lifecycle  [done]
 
 P1 core reliability
 6. Graceful stop
