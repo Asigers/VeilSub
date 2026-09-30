@@ -21,6 +21,7 @@ class SpeechResult(BaseModel):
     text: str
     stability: float = 0.0
     is_final: bool = False
+    end_offset_ms: int | None = None
 
 
 class SubtitleEvent(BaseModel):
@@ -30,3 +31,4 @@ class SubtitleEvent(BaseModel):
     target: str | None = None
     stability: float
     is_final: bool
+    end_offset_ms: int | None = None
