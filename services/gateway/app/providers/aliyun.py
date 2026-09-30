@@ -192,6 +192,8 @@ class AliyunTranslator(Translator):
         source_language: str,
         target_language: str,
     ) -> str:
+        if len(text) > 5000:
+            raise ValueError("Aliyun TranslateGeneral source_text exceeds 5000 characters")
         if not self.settings.alibaba_cloud_access_key_id:
             raise RuntimeError("ALIBABA_CLOUD_ACCESS_KEY_ID is required")
         if not self.settings.alibaba_cloud_access_key_secret:
