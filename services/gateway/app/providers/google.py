@@ -24,7 +24,8 @@ class GoogleSpeechStream(SpeechStream):
         self._client: Any = None
         self._started = False
         self._closed = False
-        self._sequence = 0
+        self._segment_sequence = 0
+        self._active_segment_ids: list[str] = []
         self._language = ""
         self._audio: AudioConfig | None = None
 
@@ -75,7 +76,6 @@ class GoogleSpeechStream(SpeechStream):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._stream_task
             except Exception as exc:
-                # Any provider failure was already published to results().
                 logger.debug("speech stream ended with an error during close", exc_info=exc)
 
         await self._close_client()
@@ -145,8 +145,7 @@ class GoogleSpeechStream(SpeechStream):
         try:
             stream = await self._client.streaming_recognize(requests=self._request_iterator())
             async for response in stream:
-                result = self._convert_response(response)
-                if result is not None:
+                for result in self._convert_response(response):
                     await self._result_queue.put(result)
         except asyncio.CancelledError:
             raise
@@ -157,36 +156,64 @@ class GoogleSpeechStream(SpeechStream):
         finally:
             await self._result_queue.put(None)
 
-    def _convert_response(self, response: Any) -> SpeechResult | None:
-        usable = [
-            result
-            for result in response.results
-            if result.alternatives and result.alternatives[0].transcript
-        ]
-        if not usable:
-            return None
+    def _convert_response(self, response: Any) -> list[SpeechResult]:
+        """Convert each provider result independently and keep interim IDs stable.
 
-        text = "".join(result.alternatives[0].transcript for result in usable).strip()
-        if not text:
-            return None
+        Google may return multiple consecutive StreamingRecognitionResult objects in
+        one response. They are independent subtitle portions and must not be merged.
+        Active interim IDs are aligned by result position until each portion becomes
+        final, after which that ID is retired.
+        """
+        previous_active_ids = self._active_segment_ids
+        next_active_ids: list[str] = []
+        active_index = 0
+        converted: list[SpeechResult] = []
 
-        is_final = all(result.is_final for result in usable)
-        stability = (
-            1.0
-            if is_final
-            else min(
-                1.0 if result.is_final else float(result.stability)
-                for result in usable
+        for provider_result in response.results:
+            if not provider_result.alternatives:
+                continue
+
+            text = provider_result.alternatives[0].transcript.strip()
+            if not text:
+                continue
+
+            if active_index < len(previous_active_ids):
+                segment_id = previous_active_ids[active_index]
+            else:
+                segment_id = self._new_segment_id()
+            active_index += 1
+
+            is_final = bool(provider_result.is_final)
+            if not is_final:
+                next_active_ids.append(segment_id)
+
+            converted.append(
+                SpeechResult(
+                    id=segment_id,
+                    text=text,
+                    stability=1.0 if is_final else float(provider_result.stability),
+                    is_final=is_final,
+                    end_offset_ms=self._duration_to_ms(provider_result.result_end_offset),
+                )
             )
-        )
 
-        self._sequence += 1
-        return SpeechResult(
-            id=f"google-{self._sequence}",
-            text=text,
-            stability=stability,
-            is_final=is_final,
-        )
+        self._active_segment_ids = next_active_ids
+        return converted
+
+    def _new_segment_id(self) -> str:
+        self._segment_sequence += 1
+        return f"google-{self._segment_sequence}"
+
+    @staticmethod
+    def _duration_to_ms(duration: Any) -> int | None:
+        if duration is None:
+            return None
+
+        seconds = getattr(duration, "seconds", 0)
+        nanos = getattr(duration, "nanos", 0)
+        if not seconds and not nanos:
+            return 0
+        return int(seconds * 1000 + nanos / 1_000_000)
 
     async def _iterate_results(self) -> AsyncIterator[SpeechResult]:
         while True:
