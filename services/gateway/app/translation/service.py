@@ -1,5 +1,5 @@
 import asyncio
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 
 from app.providers.base import Translator
@@ -13,12 +13,7 @@ class TranslationResult:
 
 
 class TranslationService:
-    """Small per-session translation runtime.
-
-    It keeps translation off the ASR hot path, bounds concurrency, caches repeated
-    finalized text, and converts provider failures/timeouts into a missing target
-    rather than a failed subtitle session.
-    """
+    """Per-session translation runtime with timeout, cache and rate limits."""
 
     def __init__(
         self,
@@ -26,20 +21,27 @@ class TranslationService:
         *,
         timeout_seconds: float,
         max_concurrency: int,
+        max_qps: int,
         cache_size: int,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("translation timeout must be positive")
         if max_concurrency < 1:
             raise ValueError("translation max concurrency must be >= 1")
+        if max_qps < 1:
+            raise ValueError("translation max QPS must be >= 1")
         if cache_size < 0:
             raise ValueError("translation cache size must be >= 0")
 
         self.translator = translator
         self.timeout_seconds = timeout_seconds
         self.semaphore = asyncio.Semaphore(max_concurrency)
+        self.max_qps = max_qps
         self.cache_size = cache_size
         self.cache: OrderedDict[tuple[str, str, str], str] = OrderedDict()
+
+        self._rate_lock = asyncio.Lock()
+        self._recent_calls: deque[float] = deque()
 
         self.calls = 0
         self.characters = 0
@@ -66,12 +68,13 @@ class TranslationService:
             return TranslationResult(target=cached, cache_hit=True, timed_out=False)
 
         async with self.semaphore:
-            # Another task may have filled the cache while this one waited.
             cached = self.cache.get(key)
             if cached is not None:
                 self.cache.move_to_end(key)
                 self.cache_hits += 1
                 return TranslationResult(target=cached, cache_hit=True, timed_out=False)
+
+            await self._acquire_rate_slot()
 
             self.calls += 1
             self.characters += len(normalized)
@@ -95,6 +98,22 @@ class TranslationService:
 
             self._cache_put(key, translated)
             return TranslationResult(target=translated, cache_hit=False, timed_out=False)
+
+    async def _acquire_rate_slot(self) -> None:
+        loop = asyncio.get_running_loop()
+
+        async with self._rate_lock:
+            while True:
+                now = loop.time()
+                while self._recent_calls and now - self._recent_calls[0] >= 1:
+                    self._recent_calls.popleft()
+
+                if len(self._recent_calls) < self.max_qps:
+                    self._recent_calls.append(now)
+                    return
+
+                wait_seconds = 1 - (now - self._recent_calls[0])
+                await asyncio.sleep(max(wait_seconds, 0.001))
 
     def _cache_put(self, key: tuple[str, str, str], value: str) -> None:
         if self.cache_size == 0:
