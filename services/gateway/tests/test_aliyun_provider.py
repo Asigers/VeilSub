@@ -103,3 +103,19 @@ async def test_translation_uses_ja_to_zh_codes() -> None:
     assert fake_client.last_request.source_language == "ja"
     assert fake_client.last_request.target_language == "zh"
     assert fake_client.last_request.scene == "general"
+
+
+@pytest.mark.asyncio
+async def test_translation_rejects_over_5000_characters() -> None:
+    settings = Settings(
+        alibaba_cloud_access_key_id="id",
+        alibaba_cloud_access_key_secret="secret",
+    )
+    translator = AliyunTranslator(settings)
+
+    with pytest.raises(ValueError, match="5000"):
+        await translator.translate(
+            "あ" * 5001,
+            source_language="ja-JP",
+            target_language="zh-CN",
+        )
