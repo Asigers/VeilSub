@@ -28,16 +28,11 @@ async def live_subtitles(websocket: WebSocket) -> None:
         session_id = uuid.uuid4().hex
         await websocket.send_json({"type": "session.ready", "session_id": session_id})
 
-        stabilizer = SubtitleStabilizer(
-            settings.veilsub_partial_threshold,
-            settings.veilsub_translate_threshold,
-        )
+        stabilizer = SubtitleStabilizer()
 
         async def pump_results() -> None:
             async for result in speech.results():
                 decision = stabilizer.decide(result)
-                if not decision.show:
-                    continue
 
                 target = None
                 if decision.translate and result.text:
@@ -47,20 +42,12 @@ async def live_subtitles(websocket: WebSocket) -> None:
                         target_language=start.target_language,
                     )
 
-                event_type = (
-                    "subtitle.final"
-                    if decision.final
-                    else "subtitle.stable"
-                    if decision.translate
-                    else "subtitle.partial"
-                )
                 await websocket.send_json(
                     SubtitleEvent(
-                        type=event_type,
+                        type="subtitle.final" if decision.final else "subtitle.partial",
                         id=result.id,
                         source=result.text,
                         target=target,
-                        stability=result.stability,
                         is_final=result.is_final,
                         end_offset_ms=result.end_offset_ms,
                     ).model_dump()
@@ -92,8 +79,6 @@ async def live_subtitles(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except Exception as exc:  # noqa: BLE001
-        # This is the protocol boundary: provider/validation failures become
-        # a stable session.error event instead of leaking implementation types.
         with contextlib.suppress(Exception):
             await websocket.send_json(
                 {
