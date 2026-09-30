@@ -1,8 +1,8 @@
 import asyncio
+
 import pytest
 
 from app.config import Settings
-from app.models import AudioConfig
 from app.providers.aliyun import AliyunSpeechStream, AliyunTranslator
 
 
