@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from google.cloud.speech_v2.types import cloud_speech
+from google.protobuf.duration_pb2 import Duration
 
 from app.config import Settings
 from app.models import AudioConfig
@@ -37,11 +38,33 @@ class FakeSpeechClient:
                         ],
                         stability=0.92,
                         is_final=False,
+                        result_end_offset=Duration(seconds=1, nanos=250_000_000),
                     )
                 ]
             )
 
         return responses()
+
+
+def provider_result(
+    text: str,
+    *,
+    stability: float,
+    is_final: bool = False,
+    end_ms: int = 0,
+):
+    seconds, millis = divmod(end_ms, 1000)
+    return cloud_speech.StreamingRecognitionResult(
+        alternatives=[
+            cloud_speech.SpeechRecognitionAlternative(transcript=text)
+        ],
+        stability=stability,
+        is_final=is_final,
+        result_end_offset=Duration(
+            seconds=seconds,
+            nanos=millis * 1_000_000,
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -63,6 +86,7 @@ async def test_chirp3_stream_emits_interim_result(monkeypatch) -> None:
     assert result.text == "こんにちは"
     assert result.stability == pytest.approx(0.92)
     assert result.is_final is False
+    assert result.end_offset_ms == 1250
 
     config_request = fake_client.config_request
     assert config_request.recognizer == "projects/veilsub-test/locations/us/recognizers/_"
@@ -73,6 +97,92 @@ async def test_chirp3_stream_emits_interim_result(monkeypatch) -> None:
 
     await speech.close()
     assert fake_client.transport.closed is True
+
+
+def test_multi_result_response_keeps_independent_stability() -> None:
+    speech = GoogleSpeechStream(Settings(google_cloud_project="veilsub-test"))
+
+    results = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[
+                provider_result("安定した前半", stability=0.95, end_ms=1200),
+                provider_result("まだ不安定", stability=0.32, end_ms=1800),
+            ]
+        )
+    )
+
+    assert [result.text for result in results] == ["安定した前半", "まだ不安定"]
+    assert results[0].stability == pytest.approx(0.95)
+    assert results[1].stability == pytest.approx(0.32)
+    assert results[0].id != results[1].id
+
+
+def test_interim_revisions_keep_same_segment_id_until_final() -> None:
+    speech = GoogleSpeechStream(Settings(google_cloud_project="veilsub-test"))
+
+    first = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[provider_result("そんな", stability=0.60, end_ms=500)]
+        )
+    )[0]
+    second = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[provider_result("そんなに見", stability=0.82, end_ms=900)]
+        )
+    )[0]
+    final = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[
+                provider_result(
+                    "そんなに見ないで",
+                    stability=0.0,
+                    is_final=True,
+                    end_ms=1400,
+                )
+            ]
+        )
+    )[0]
+    next_segment = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[provider_result("次の文", stability=0.70, end_ms=1900)]
+        )
+    )[0]
+
+    assert first.id == second.id == final.id
+    assert final.is_final is True
+    assert final.stability == 1.0
+    assert final.end_offset_ms == 1400
+    assert next_segment.id != final.id
+
+
+def test_final_plus_interim_keeps_result_boundaries() -> None:
+    speech = GoogleSpeechStream(Settings(google_cloud_project="veilsub-test"))
+
+    current = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[provider_result("第一文", stability=0.80, end_ms=800)]
+        )
+    )[0]
+
+    results = speech._convert_response(
+        cloud_speech.StreamingRecognizeResponse(
+            results=[
+                provider_result(
+                    "第一文です",
+                    stability=0.0,
+                    is_final=True,
+                    end_ms=1000,
+                ),
+                provider_result("第二", stability=0.40, end_ms=1300),
+            ]
+        )
+    )
+
+    assert len(results) == 2
+    assert results[0].id == current.id
+    assert results[0].is_final is True
+    assert results[1].id != current.id
+    assert results[1].is_final is False
 
 
 @pytest.mark.asyncio
