@@ -97,43 +97,48 @@ Alibaba recommends heartbeat for silence and client-side reconnect for connectio
 
 # M1 — Japanese -> Chinese translation
 
+**Implementation status:** M1 code path is complete. Real Alibaba Cloud translation credentials / media validation are deferred with P0 validation.
+
 ## 7. Enable Alibaba Machine Translation
 
-The adapter already exists; product integration is still disabled by default.
+The adapter is integrated into the live pipeline but remains opt-in so local development can run without cloud credentials.
 
-- [ ] set `VEILSUB_TRANSLATION_PROVIDER=aliyun`
-- [ ] configure RAM AccessKey credentials
-- [ ] translate final Japanese segments to Simplified Chinese
-- [ ] enforce translation timeout
-- [ ] source subtitle must still render if translation fails
+- [x] support `VEILSUB_TRANSLATION_PROVIDER=aliyun` in the live pipeline
+- [ ] configure / validate real RAM AccessKey credentials
+- [x] translate final Japanese segments to Simplified Chinese
+- [x] enforce translation timeout
+- [x] source subtitle renders before translation and survives translation failure
+- [x] emit translation as a later update instead of blocking ASR
 - [ ] verify `ja -> zh` on real colloquial media
 
 ## 8. Make translation asynchronous
 
 `live.py` currently awaits translation inline.
 
-- [ ] decouple ASR event consumption from translation calls
-- [ ] add per-segment revision/version
-- [ ] prevent stale translation response from replacing newer text
-- [ ] cancel obsolete translation work
+- [x] decouple ASR event consumption from translation calls
+- [x] add per-segment revision/version
+- [x] prevent stale translation response from replacing newer text
+- [x] cancel obsolete translation work
 
 ## 9. Deduplicate translation
 
-- [ ] translate only changed/final text
-- [ ] cache normalized source text
-- [ ] collect translation calls and characters per session
-- [ ] respect TranslateGeneral 5000-character per-request limit
-- [ ] respect default QPS limits
+- [x] translate only changed/final text
+- [x] cache normalized source text
+- [x] collect translation calls and characters per session
+- [x] respect TranslateGeneral 5000-character per-request limit
+- [x] respect default QPS limits
 
 ## 10. Subtitle replacement and history
 
-- [ ] replace current segment by stable `id`
-- [ ] keep previous final subtitle while current sentence is spoken
-- [ ] max line/character policy
-- [ ] natural expiry
-- [ ] source-only / bilingual / translated-only modes
-- [ ] temporary history panel
-- [ ] avoid visible flicker
+- [x] replace current segment by stable `id`
+- [x] keep previous final subtitle while current sentence is spoken
+- [x] max visible segment policy (previous final + current)
+- [ ] max character policy for exceptionally long sentences
+- [x] natural expiry
+- [x] source-only / bilingual / translated-only modes
+- [x] bounded in-memory subtitle history (50 segments)
+- [ ] user-visible history panel
+- [x] avoid visible flicker
 
 ---
 
@@ -193,10 +198,10 @@ Validate before changing:
 - [x] basic connection/capture state
 - [ ] ASR status
 - [x] reconnecting state
-- [ ] source language selector
-- [ ] target language selector
-- [ ] translated-only mode
-- [ ] source subtitle toggle
+- [x] source language selector
+- [x] target language selector
+- [x] translated-only mode
+- [x] source subtitle toggle
 - [ ] font size
 - [ ] vertical position
 - [ ] background opacity
@@ -206,7 +211,7 @@ Validate before changing:
 ## 15. Subtitle rendering
 
 - [ ] draggable position
-- [ ] safe-area handling
+- [x] safe-area handling
 - [x] long-line wrapping
 - [x] Japanese/Chinese font fallback
 - [ ] high-DPI rendering
@@ -255,6 +260,10 @@ Before exposing a hosted Gateway publicly:
 - [ ] binary audio frame test
 - [x] final subtitle event test
 - [ ] ASR failure -> `session.error`
+- [x] slow translation does not block the next ASR event
+- [x] obsolete translation revision cannot overwrite a newer subtitle
+- [x] translation cache / timeout unit tests
+- [x] TranslateGeneral 5000-character limit test
 - [x] graceful stop/flush ordering test
 - [ ] reconnect tests
 - [x] Aliyun interim/final segment-ID tests
