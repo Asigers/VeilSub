@@ -6,10 +6,10 @@ from app.providers.mock import MockSpeechStream, MockTranslator, NullTranslator
 def create_speech_stream(settings: Settings) -> SpeechStream:
     if settings.veilsub_speech_provider == "mock":
         return MockSpeechStream()
-    if settings.veilsub_speech_provider == "google":
-        from app.providers.google import GoogleSpeechStream
+    if settings.veilsub_speech_provider == "aliyun":
+        from app.providers.aliyun import AliyunSpeechStream
 
-        return GoogleSpeechStream(settings)
+        return AliyunSpeechStream(settings)
     raise ValueError(f"unsupported speech provider: {settings.veilsub_speech_provider}")
 
 
@@ -18,10 +18,10 @@ def create_translator(settings: Settings) -> Translator:
         return NullTranslator()
     if settings.veilsub_translation_provider == "mock":
         return MockTranslator()
-    if settings.veilsub_translation_provider == "google":
-        from app.providers.google import GoogleTranslator
+    if settings.veilsub_translation_provider == "aliyun":
+        from app.providers.aliyun import AliyunTranslator
 
-        return GoogleTranslator(settings)
+        return AliyunTranslator(settings)
     raise ValueError(
         f"unsupported translation provider: {settings.veilsub_translation_provider}"
     )
