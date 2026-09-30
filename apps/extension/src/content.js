@@ -117,10 +117,9 @@
 
     if (typeof host.hidePopover === 'function' && host.matches(':popover-open')) {
       host.hidePopover();
-      return;
     }
 
-    host.style.display = 'none';
+    host.remove();
   }
 
   function refreshTopLayer() {
