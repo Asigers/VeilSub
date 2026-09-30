@@ -1,6 +1,4 @@
 import asyncio
-from types import SimpleNamespace
-
 import pytest
 
 from app.config import Settings
