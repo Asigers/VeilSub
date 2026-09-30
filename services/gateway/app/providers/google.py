@@ -209,11 +209,14 @@ class GoogleSpeechStream(SpeechStream):
         if duration is None:
             return None
 
+        total_seconds = getattr(duration, "total_seconds", None)
+        if callable(total_seconds):
+            return int(round(total_seconds() * 1000))
+
         seconds = getattr(duration, "seconds", 0)
         nanos = getattr(duration, "nanos", 0)
-        if not seconds and not nanos:
-            return 0
-        return int(seconds * 1000 + nanos / 1_000_000)
+        microseconds = getattr(duration, "microseconds", 0)
+        return int(round(seconds * 1000 + nanos / 1_000_000 + microseconds / 1000))
 
     async def _iterate_results(self) -> AsyncIterator[SpeechResult]:
         while True:
