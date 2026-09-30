@@ -19,7 +19,17 @@ async def live_subtitles(websocket: WebSocket) -> None:
     settings = get_settings()
     speech = create_speech_stream(settings)
     translator = create_translator(settings)
-    tasks: set[asyncio.Task[None]] = set()
+
+    pump_task: asyncio.Task[None] | None = None
+    receive_task: asyncio.Task[str] | None = None
+    speech_closed = False
+
+    async def close_speech() -> None:
+        nonlocal speech_closed
+        if speech_closed:
+            return
+        speech_closed = True
+        await speech.close()
 
     try:
         start = SessionStart.model_validate_json(await websocket.receive_text())
@@ -45,7 +55,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 await websocket.send_json(
                     SubtitleEvent(
                         type="subtitle.final" if decision.final else "subtitle.partial",
-                        id=result.id,
+                        id=f"{session_id}:{result.id}",
                         source=result.text,
                         target=target,
                         is_final=result.is_final,
@@ -53,7 +63,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
                     ).model_dump()
                 )
 
-        async def receive_audio() -> None:
+        async def receive_audio() -> str:
             while True:
                 message = await websocket.receive()
                 if message.get("bytes") is not None:
@@ -63,18 +73,33 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 if message.get("text"):
                     payload = json.loads(message["text"])
                     if payload.get("type") == "session.stop":
-                        return
+                        return "stop"
 
-        tasks = {
-            asyncio.create_task(pump_results(), name="subtitle-results"),
-            asyncio.create_task(receive_audio(), name="subtitle-audio"),
-        }
-        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        pump_task = asyncio.create_task(pump_results(), name="subtitle-results")
+        receive_task = asyncio.create_task(receive_audio(), name="subtitle-audio")
 
-        for task in pending:
-            task.cancel()
-        for task in done:
-            await task
+        done, _pending = await asyncio.wait(
+            {pump_task, receive_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if receive_task in done:
+            reason = await receive_task
+            if reason == "stop":
+                # Half-close the input side first. Aliyun's stop() flushes the
+                # current sentence through the callback before results() ends.
+                await close_speech()
+                await pump_task
+                await websocket.send_json({"type": "session.stopped"})
+                return
+
+        if pump_task in done:
+            # Provider completion/failure wins. Propagate its exception, if any.
+            await pump_task
+            if receive_task and not receive_task.done():
+                receive_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await receive_task
 
     except WebSocketDisconnect:
         pass
@@ -88,8 +113,11 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 }
             )
     finally:
-        await speech.close()
-        for task in tasks:
+        await close_speech()
+
+        for task in (receive_task, pump_task):
+            if task is None:
+                continue
             if not task.done():
                 task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
