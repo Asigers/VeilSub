@@ -151,6 +151,12 @@ async function startCapture(config) {
 async function failCapturedSession(message) {
   const current = await getCaptureState();
   const tabId = current.tabId;
+
+  await setCaptureState({
+    ...current,
+    status: 'stopping',
+    error: null,
+  });
   await stopOffscreenCapture().catch(() => undefined);
   await hideOverlay(tabId);
   await setCaptureState({
