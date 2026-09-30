@@ -35,7 +35,6 @@ VeilSub intentionally uses **one production cloud stack only**: Alibaba Cloud.
 - Region for ASR: China (Beijing) by default
 - Local development: mock ASR + no translation
 
-There is no Google provider or Google SDK dependency in this repository.
 
 ## Repository layout
 
