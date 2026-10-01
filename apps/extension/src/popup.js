@@ -2,6 +2,10 @@ const gateway = document.querySelector('#gateway');
 const source = document.querySelector('#source');
 const target = document.querySelector('#target');
 const displayMode = document.querySelector('#displayMode');
+const fontSize = document.querySelector('#fontSize');
+const verticalPosition = document.querySelector('#verticalPosition');
+const backgroundOpacity = document.querySelector('#backgroundOpacity');
+const subtitleDelayMs = document.querySelector('#subtitleDelayMs');
 const status = document.querySelector('#status');
 const metrics = document.querySelector('#metrics');
 const startButton = document.querySelector('#start');
@@ -12,12 +16,20 @@ const saved = await chrome.storage.local.get([
   'sourceLanguage',
   'targetLanguage',
   'displayMode',
+  'fontSize',
+  'verticalPosition',
+  'backgroundOpacity',
+  'subtitleDelayMs',
 ]);
 
 gateway.value = saved.gateway || gateway.value;
 source.value = saved.sourceLanguage || source.value;
 target.value = saved.targetLanguage || target.value;
 displayMode.value = saved.displayMode || 'bilingual';
+fontSize.value = saved.fontSize ?? 21;
+verticalPosition.value = saved.verticalPosition ?? 9;
+backgroundOpacity.value = saved.backgroundOpacity ?? 72;
+subtitleDelayMs.value = saved.subtitleDelayMs ?? 0;
 
 function formatMetric(value, suffix = 'ms') {
   if (value === null || value === undefined) return '—';
@@ -63,6 +75,40 @@ function renderState(state) {
     state?.status
   );
 }
+
+function bindRange(input, valueElement, suffix, storageKey) {
+  const render = () => {
+    valueElement.textContent = `${input.value}${suffix}`;
+  };
+
+  render();
+  input.addEventListener('input', async () => {
+    render();
+    await chrome.storage.local.set({
+      [storageKey]: Number(input.value),
+    });
+  });
+}
+
+bindRange(fontSize, document.querySelector('#fontSizeValue'), ' px', 'fontSize');
+bindRange(
+  verticalPosition,
+  document.querySelector('#verticalPositionValue'),
+  ' vh',
+  'verticalPosition'
+);
+bindRange(
+  backgroundOpacity,
+  document.querySelector('#backgroundOpacityValue'),
+  '%',
+  'backgroundOpacity'
+);
+bindRange(
+  subtitleDelayMs,
+  document.querySelector('#subtitleDelayMsValue'),
+  ' ms',
+  'subtitleDelayMs'
+);
 
 async function refreshState() {
   const response = await chrome.runtime.sendMessage({ type: 'capture.getState' });
