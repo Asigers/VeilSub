@@ -17,8 +17,10 @@ let stopping = false;
 let reconnectTask = null;
 let captureGeneration = 0;
 let droppedAudioMs = 0;
+let reconnectCount = 0;
 let lastStatsSentAt = 0;
 let stopAckResolver = null;
+let lastSessionMetrics = null;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,11 +50,24 @@ async function publishStats(force = false) {
   if (!force && now - lastStatsSentAt < 1000) return;
   lastStatsSentAt = now;
 
+  const stats = {
+    reconnectCount,
+    droppedAudioMs: Math.round(droppedAudioMs),
+  };
+
   await chrome.runtime.sendMessage({
     type: 'offscreen.capture.stats',
     tabId,
-    droppedAudioMs: Math.round(droppedAudioMs),
+    ...stats,
   }).catch(() => undefined);
+
+  if (sessionReady && socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({
+      type: 'client.stats',
+      reconnect_count: stats.reconnectCount,
+      dropped_audio_ms: stats.droppedAudioMs,
+    }));
+  }
 }
 
 function frameDurationMs(buffer) {
@@ -66,11 +81,16 @@ function dropFrame(buffer) {
 
 async function closeGateway({ graceful = false } = {}) {
   const ws = socket;
-  if (!ws) return;
+  if (!ws) return null;
+
+  let stoppedPayload = null;
 
   if (graceful && sessionReady && ws.readyState === WebSocket.OPEN) {
     const stopped = new Promise((resolve) => {
-      stopAckResolver = resolve;
+      stopAckResolver = (payload) => {
+        stoppedPayload = payload || null;
+        resolve();
+      };
     });
 
     try {
@@ -93,13 +113,23 @@ async function closeGateway({ graceful = false } = {}) {
   } catch (_) {
     // Ignore close races.
   }
+
+  return stoppedPayload;
 }
 
 async function cleanup({ graceful = false } = {}) {
   captureGeneration += 1;
   reconnectTask = null;
 
-  await closeGateway({ graceful });
+  const stoppedPayload = await closeGateway({ graceful });
+  if (stoppedPayload?.metrics) {
+    lastSessionMetrics = stoppedPayload.metrics;
+    await chrome.runtime.sendMessage({
+      type: 'offscreen.capture.metrics',
+      tabId,
+      metrics: lastSessionMetrics,
+    }).catch(() => undefined);
+  }
 
   processor?.disconnect();
   processor = null;
@@ -113,12 +143,13 @@ async function cleanup({ graceful = false } = {}) {
   await publishStats(true);
   tabId = null;
   activeConfig = null;
+  return lastSessionMetrics;
 }
 
 async function stop() {
   stopping = true;
   try {
-    await cleanup({ graceful: true });
+    return await cleanup({ graceful: true });
   } finally {
     stopping = false;
   }
@@ -135,6 +166,8 @@ async function scheduleReconnect(reason, generation) {
   if (stopping || generation !== captureGeneration || reconnectTask) return;
 
   sessionReady = false;
+  reconnectCount += 1;
+  publishStats(true).catch(() => undefined);
 
   reconnectTask = (async () => {
     let lastError = reason;
@@ -247,7 +280,8 @@ function connectGatewayOnce(config, currentTabId, generation) {
       }
 
       if (payload.type === 'session.stopped') {
-        stopAckResolver?.();
+        lastSessionMetrics = payload.metrics || null;
+        stopAckResolver?.(payload);
         return;
       }
 
@@ -291,7 +325,7 @@ function connectGatewayOnce(config, currentTabId, generation) {
       }
 
       if (stopping || generation !== captureGeneration) {
-        stopAckResolver?.();
+        stopAckResolver?.(null);
         return;
       }
 
@@ -331,6 +365,8 @@ async function start(message) {
   tabId = message.tabId;
   activeConfig = message.config;
   droppedAudioMs = 0;
+  reconnectCount = 0;
+  lastSessionMetrics = null;
   lastStatsSentAt = 0;
 
   try {
@@ -392,7 +428,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   if (message.type === 'offscreen.capture.stop') {
     stop()
-      .then(() => sendResponse({ ok: true }))
+      .then((metrics) => sendResponse({ ok: true, metrics }))
       .catch((error) => {
         sendResponse({
           ok: false,
