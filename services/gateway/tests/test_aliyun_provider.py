@@ -119,3 +119,48 @@ async def test_translation_rejects_over_5000_characters() -> None:
             source_language="ja-JP",
             target_language="zh-CN",
         )
+
+
+
+@pytest.mark.asyncio
+async def test_asr_tuning_and_hotwords_are_forwarded(monkeypatch) -> None:
+    captured = {}
+
+    class FakeRecognition:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def start(self):
+            return None
+
+        def stop(self):
+            return None
+
+    monkeypatch.setattr("app.providers.aliyun.asr.Recognition", FakeRecognition)
+
+    settings = Settings(
+        dashscope_api_key="key",
+        aliyun_bailian_workspace_id="workspace",
+        aliyun_asr_semantic_punctuation_enabled=False,
+        aliyun_asr_max_sentence_silence_ms=900,
+        aliyun_asr_multi_threshold_mode_enabled=True,
+        aliyun_asr_speech_noise_threshold=0.2,
+        aliyun_asr_vocabulary_id="vocab-123",
+        aliyun_asr_vocabulary={"山田": 4},
+    )
+    speech = AliyunSpeechStream(settings)
+
+    from app.models import AudioConfig
+
+    await speech.start(language="ja-JP", audio=AudioConfig())
+
+    assert captured["language_hints"] == ["ja"]
+    assert captured["semantic_punctuation_enabled"] is False
+    assert captured["max_sentence_silence"] == 900
+    assert captured["multi_threshold_mode_enabled"] is True
+    assert captured["speech_noise_threshold"] == pytest.approx(0.2)
+    assert captured["vocabulary_id"] == "vocab-123"
+    assert captured["vocabulary"] == {"山田": 4}
+    assert captured["heartbeat"] is True
+
+    await speech.close()
