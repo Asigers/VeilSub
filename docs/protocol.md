@@ -45,9 +45,26 @@ A normal client stop is acknowledged only after ASR final-result flushing and pe
 ```json
 {
   "type": "session.stopped",
-  "translation_calls": 12,
-  "translation_characters": 184,
-  "translation_cache_hits": 2
+  "metrics": {
+    "time_to_first_subtitle_ms": 640.2,
+    "asr_interim_latency_ms_p50": null,
+    "asr_interim_latency_ms_p95": null,
+    "asr_final_latency_ms_p50": 410.0,
+    "asr_final_latency_ms_p95": 780.4,
+    "translation_latency_ms_p50": 92.3,
+    "translation_latency_ms_p95": 180.8,
+    "translation_e2e_latency_ms_p50": 520.1,
+    "translation_e2e_latency_ms_p95": 930.5,
+    "subtitle_revision_count": 38,
+    "reconnect_count": 0,
+    "dropped_audio_ms": 0.0,
+    "estimated_asr_seconds": 61.2,
+    "translation_calls": 14,
+    "translation_characters": 184,
+    "translation_cache_hits": 2,
+    "translation_timeouts": 0,
+    "translation_failures": 0
+  }
 }
 ```
 
@@ -157,3 +174,16 @@ For each Gateway session:
 - stable IDs and revisions are required for replacement and translation ordering;
 - reconnect logic must avoid duplicating finalized segments;
 - live latency is more important than replaying stale buffered audio.
+
+
+## Metrics semantics
+
+The metrics object is diagnostic, not a cloud billing statement.
+
+- `time_to_first_subtitle_ms`: first subtitle event minus first audio frame received by the Gateway.
+- ASR final latency: Gateway stream elapsed time minus Aliyun final sentence `end_time`.
+- ASR interim latency currently remains null because Qwen interim sentences do not provide a reliable end offset.
+- translation latency: time spent inside the translation provider call.
+- translation end-to-end latency: Gateway stream elapsed time minus the source sentence end offset when translated text is ready.
+- `estimated_asr_seconds`: PCM duration received by the Gateway; use provider billing reports for authoritative billing.
+- reconnect/drop metrics originate from the browser client and are sent through `client.stats`.
