@@ -3,6 +3,7 @@ const source = document.querySelector('#source');
 const target = document.querySelector('#target');
 const displayMode = document.querySelector('#displayMode');
 const status = document.querySelector('#status');
+const metrics = document.querySelector('#metrics');
 const startButton = document.querySelector('#start');
 const stopButton = document.querySelector('#stop');
 
@@ -18,7 +19,31 @@ source.value = saved.sourceLanguage || source.value;
 target.value = saved.targetLanguage || target.value;
 displayMode.value = saved.displayMode || 'bilingual';
 
+function formatMetric(value, suffix = 'ms') {
+  if (value === null || value === undefined) return '—';
+  return `${Math.round(value)} ${suffix}`;
+}
+
+function renderMetrics(data) {
+  if (!data) {
+    metrics.style.display = 'none';
+    metrics.textContent = '';
+    return;
+  }
+
+  metrics.style.display = 'block';
+  metrics.innerHTML = [
+    '<strong>Last session</strong>',
+    `TTFS: ${formatMetric(data.time_to_first_subtitle_ms)}`,
+    `ASR final P50/P95: ${formatMetric(data.asr_final_latency_ms_p50)} / ${formatMetric(data.asr_final_latency_ms_p95)}`,
+    `Translation P50/P95: ${formatMetric(data.translation_latency_ms_p50)} / ${formatMetric(data.translation_latency_ms_p95)}`,
+    `Dropped: ${formatMetric(data.dropped_audio_ms)} · reconnects: ${data.reconnect_count ?? 0}`,
+    `Audio: ${data.estimated_asr_seconds ?? 0}s · translated chars: ${data.translation_characters ?? 0}`,
+  ].join('<br>');
+}
+
 function renderState(state) {
+  renderMetrics(state?.lastMetrics);
   const labels = {
     idle: 'Idle',
     starting: 'Starting…',
