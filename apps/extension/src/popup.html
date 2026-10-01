@@ -24,6 +24,16 @@
     #start { background:#111827; color:white; }
     #stop { background:#f3f4f6; color:#111827; }
     #status { margin-top:10px; font-size:12px; color:#6b7280; min-height:16px; }
+    #metrics {
+      display:none;
+      margin-top:12px;
+      padding-top:10px;
+      border-top:1px solid #e5e7eb;
+      font-size:11px;
+      color:#6b7280;
+      line-height:1.55;
+    }
+    #metrics strong { color:#374151; font-weight:600; }
   </style>
 </head>
 <body>
@@ -52,6 +62,7 @@
   </div>
 
   <div id="status"></div>
+  <div id="metrics"></div>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
