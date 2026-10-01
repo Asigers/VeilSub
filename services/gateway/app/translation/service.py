@@ -59,21 +59,36 @@ class TranslationService:
     ) -> TranslationResult:
         normalized = self._normalize(text)
         if not normalized:
-            return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
+            return TranslationResult(
+                target=None,
+                cache_hit=False,
+                timed_out=False,
+                latency_ms=0.0,
+            )
 
         key = (source_language, target_language, normalized)
         cached = self.cache.get(key)
         if cached is not None:
             self.cache.move_to_end(key)
             self.cache_hits += 1
-            return TranslationResult(target=cached, cache_hit=True, timed_out=False, latency_ms=0.0)
+            return TranslationResult(
+                target=cached,
+                cache_hit=True,
+                timed_out=False,
+                latency_ms=0.0,
+            )
 
         async with self.semaphore:
             cached = self.cache.get(key)
             if cached is not None:
                 self.cache.move_to_end(key)
                 self.cache_hits += 1
-                return TranslationResult(target=cached, cache_hit=True, timed_out=False, latency_ms=0.0)
+                return TranslationResult(
+                    target=cached,
+                    cache_hit=True,
+                    timed_out=False,
+                    latency_ms=0.0,
+                )
 
             await self._acquire_rate_slot()
 
@@ -91,16 +106,37 @@ class TranslationService:
                     )
             except TimeoutError:
                 self.timeouts += 1
-                return TranslationResult(target=None, cache_hit=False, timed_out=True)
+                return TranslationResult(
+                    target=None,
+                    cache_hit=False,
+                    timed_out=True,
+                    latency_ms=(loop.time() - started_at) * 1000,
+                )
             except Exception:  # noqa: BLE001
                 self.failures += 1
-                return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
+                return TranslationResult(
+                    target=None,
+                    cache_hit=False,
+                    timed_out=False,
+                    latency_ms=(loop.time() - started_at) * 1000,
+                )
 
+            latency_ms = (loop.time() - started_at) * 1000
             if not translated:
-                return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
+                return TranslationResult(
+                    target=None,
+                    cache_hit=False,
+                    timed_out=False,
+                    latency_ms=latency_ms,
+                )
 
             self._cache_put(key, translated)
-            return TranslationResult(target=translated, cache_hit=False, timed_out=False)
+            return TranslationResult(
+                target=translated,
+                cache_hit=False,
+                timed_out=False,
+                latency_ms=latency_ms,
+            )
 
     async def _acquire_rate_slot(self) -> None:
         loop = asyncio.get_running_loop()
