@@ -22,3 +22,25 @@ def test_sentence_silence_out_of_range_is_rejected(value: int) -> None:
 def test_noise_threshold_out_of_range_is_rejected(value: float) -> None:
     with pytest.raises(ValidationError):
         Settings(aliyun_asr_speech_noise_threshold=value)
+
+
+
+def test_hotword_configuration_accepts_supported_weights() -> None:
+    settings = Settings(
+        aliyun_asr_vocabulary={"山田": 3, "VeilSub": 50},
+        aliyun_asr_vocabulary_id="vocab-123",
+    )
+    assert settings.aliyun_asr_vocabulary["山田"] == 3
+    assert settings.aliyun_asr_vocabulary["VeilSub"] == 50
+    assert settings.aliyun_asr_vocabulary_id == "vocab-123"
+
+
+def test_hotword_configuration_rejects_invalid_weight() -> None:
+    with pytest.raises(ValidationError):
+        Settings(aliyun_asr_vocabulary={"invalid": 6})
+
+
+def test_hotword_configuration_limits_super_hotwords() -> None:
+    vocabulary = {f"word-{index}": 50 for index in range(51)}
+    with pytest.raises(ValidationError):
+        Settings(aliyun_asr_vocabulary=vocabulary)
