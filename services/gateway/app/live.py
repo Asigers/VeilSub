@@ -6,6 +6,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.config import get_settings
+from app.metrics import SessionMetrics
 from app.models import SessionStart, SubtitleEvent
 from app.providers import create_speech_stream, create_translator
 from app.subtitles import SubtitleStabilizer
@@ -35,6 +36,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
     segment_revisions: dict[str, int] = {}
     send_lock = asyncio.Lock()
     speech_closed = False
+    metrics: SessionMetrics | None = None
 
     async def send_json(payload: dict[str, object]) -> None:
         async with send_lock:
@@ -65,6 +67,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
 
     try:
         start = SessionStart.model_validate_json(await websocket.receive_text())
+        metrics = SessionMetrics(audio=start.audio)
         await speech.start(language=start.source_language, audio=start.audio)
 
         session_id = uuid.uuid4().hex
@@ -84,6 +87,11 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 source_language=start.source_language,
                 target_language=start.target_language,
             )
+            if outcome.target and metrics is not None:
+                metrics.record_translation(
+                    provider_latency_ms=outcome.latency_ms,
+                    end_offset_ms=end_offset_ms,
+                )
             if not outcome.target:
                 return
             if segment_revisions.get(segment_id) != revision:
@@ -138,6 +146,12 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 revision = segment_revisions.get(segment_id, 0) + 1
                 segment_revisions[segment_id] = revision
 
+                if metrics is not None:
+                    metrics.record_subtitle(
+                        is_final=result.is_final,
+                        end_offset_ms=result.end_offset_ms,
+                    )
+
                 await send_json(
                     SubtitleEvent(
                         type="subtitle.final" if decision.final else "subtitle.partial",
@@ -162,11 +176,20 @@ async def live_subtitles(websocket: WebSocket) -> None:
             while True:
                 message = await websocket.receive()
                 if message.get("bytes") is not None:
-                    await speech.write(message["bytes"])
+                    chunk = message["bytes"]
+                    if metrics is not None:
+                        metrics.record_audio(len(chunk))
+                    await speech.write(chunk)
                     continue
 
                 if message.get("text"):
                     payload = json.loads(message["text"])
+                    if payload.get("type") == "client.stats" and metrics is not None:
+                        metrics.update_client_stats(
+                            reconnect_count=int(payload.get("reconnect_count") or 0),
+                            dropped_audio_ms=float(payload.get("dropped_audio_ms") or 0),
+                        )
+                        continue
                     if payload.get("type") == "session.stop":
                         return "stop"
 
@@ -184,12 +207,21 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 await close_speech()
                 await pump_task
                 await drain_translation_tasks()
+                metric_summary = (
+                    metrics.summary(
+                        translation_calls=translation.calls,
+                        translation_characters=translation.characters,
+                        translation_cache_hits=translation.cache_hits,
+                        translation_timeouts=translation.timeouts,
+                        translation_failures=translation.failures,
+                    )
+                    if metrics is not None
+                    else {}
+                )
                 await send_json(
                     {
                         "type": "session.stopped",
-                        "translation_calls": translation.calls,
-                        "translation_characters": translation.characters,
-                        "translation_cache_hits": translation.cache_hits,
+                        "metrics": metric_summary,
                     }
                 )
                 return
