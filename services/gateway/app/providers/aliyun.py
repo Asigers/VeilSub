@@ -72,15 +72,27 @@ class AliyunSpeechStream(SpeechStream):
         dashscope.base_websocket_api_url = f"wss://{host}/api-ws/v1/inference"
 
         callback = _RecognitionCallback(self)
-        self._recognition = asr.Recognition(
-            model=self.settings.aliyun_asr_model,
-            format="pcm",
-            sample_rate=audio.sample_rate_hz,
-            language_hints=[language.split("-")[0]],
-            semantic_punctuation_enabled=False,
-            heartbeat=True,
-            callback=callback,
-        )
+        recognition_options = {
+            "model": self.settings.aliyun_asr_model,
+            "format": "pcm",
+            "sample_rate": audio.sample_rate_hz,
+            "language_hints": [language.split("-")[0]],
+            "semantic_punctuation_enabled": (
+                self.settings.aliyun_asr_semantic_punctuation_enabled
+            ),
+            "max_sentence_silence": self.settings.aliyun_asr_max_sentence_silence_ms,
+            "multi_threshold_mode_enabled": (
+                self.settings.aliyun_asr_multi_threshold_mode_enabled
+            ),
+            "heartbeat": True,
+            "callback": callback,
+        }
+        if self.settings.aliyun_asr_speech_noise_threshold is not None:
+            recognition_options["speech_noise_threshold"] = (
+                self.settings.aliyun_asr_speech_noise_threshold
+            )
+
+        self._recognition = asr.Recognition(**recognition_options)
 
         await asyncio.to_thread(self._recognition.start)
         self._started = True
