@@ -206,11 +206,11 @@ Validate before changing:
 - [x] target language selector
 - [x] translated-only mode
 - [x] source subtitle toggle
-- [ ] font size
-- [ ] vertical position
-- [ ] background opacity
-- [ ] subtitle delay adjustment
-- [ ] keyboard shortcut
+- [x] font size
+- [x] vertical position
+- [x] background opacity
+- [x] positive subtitle delay adjustment (0–3000 ms)
+- [x] keyboard shortcut for Start/Stop (remappable via Chrome)
 
 ## 15. Subtitle rendering
 
@@ -221,7 +221,7 @@ Validate before changing:
 - [ ] high-DPI rendering
 - [x] fullscreen support
 - [ ] avoid covering player controls
-- [ ] accessibility
+- [x] basic live-region accessibility (`role=status`, `aria-live=polite`)
 
 ---
 
@@ -277,7 +277,7 @@ Before exposing a hosted Gateway publicly:
 
 Current CI performs syntax checks only.
 
-- [ ] manifest validation
+- [x] manifest JSON validation
 - [ ] capture-state unit tests
 - [ ] overlay replacement unit tests
 - [ ] tab-switching tests
