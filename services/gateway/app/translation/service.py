@@ -10,6 +10,7 @@ class TranslationResult:
     target: str | None
     cache_hit: bool
     timed_out: bool
+    latency_ms: float
 
 
 class TranslationService:
@@ -58,26 +59,28 @@ class TranslationService:
     ) -> TranslationResult:
         normalized = self._normalize(text)
         if not normalized:
-            return TranslationResult(target=None, cache_hit=False, timed_out=False)
+            return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
 
         key = (source_language, target_language, normalized)
         cached = self.cache.get(key)
         if cached is not None:
             self.cache.move_to_end(key)
             self.cache_hits += 1
-            return TranslationResult(target=cached, cache_hit=True, timed_out=False)
+            return TranslationResult(target=cached, cache_hit=True, timed_out=False, latency_ms=0.0)
 
         async with self.semaphore:
             cached = self.cache.get(key)
             if cached is not None:
                 self.cache.move_to_end(key)
                 self.cache_hits += 1
-                return TranslationResult(target=cached, cache_hit=True, timed_out=False)
+                return TranslationResult(target=cached, cache_hit=True, timed_out=False, latency_ms=0.0)
 
             await self._acquire_rate_slot()
 
             self.calls += 1
             self.characters += len(normalized)
+            loop = asyncio.get_running_loop()
+            started_at = loop.time()
 
             try:
                 async with asyncio.timeout(self.timeout_seconds):
@@ -91,10 +94,10 @@ class TranslationService:
                 return TranslationResult(target=None, cache_hit=False, timed_out=True)
             except Exception:  # noqa: BLE001
                 self.failures += 1
-                return TranslationResult(target=None, cache_hit=False, timed_out=False)
+                return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
 
             if not translated:
-                return TranslationResult(target=None, cache_hit=False, timed_out=False)
+                return TranslationResult(target=None, cache_hit=False, timed_out=False, latency_ms=0.0)
 
             self._cache_put(key, translated)
             return TranslationResult(target=translated, cache_hit=False, timed_out=False)
