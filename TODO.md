@@ -146,20 +146,24 @@ The adapter is integrated into the live pipeline but remains opt-in so local dev
 
 ## 11. Instrumentation
 
+**Implementation status:** session metrics are emitted on graceful stop and stored by the extension. ASR interim latency remains pending because Qwen interim sentences do not expose a reliable end offset.
+
 Track:
 
-- [ ] time to first subtitle
+- [x] time to first subtitle
 - [ ] ASR interim latency
-- [ ] ASR final latency
-- [ ] translation latency
-- [ ] end-to-end latency
-- [ ] subtitle revision count
-- [ ] reconnect count
-- [ ] dropped-audio duration
-- [ ] ASR seconds billed
-- [ ] translation characters billed
+- [x] ASR final latency
+- [x] translation latency
+- [x] end-to-end translated-subtitle latency
+- [x] subtitle revision count
+- [x] reconnect count
+- [x] dropped-audio duration
+- [x] estimated ASR audio seconds (billing proxy; provider bill remains authoritative)
+- [x] translation characters/calls/cache hits/timeouts/failures
 
 ## 12. Tune Qwen ASR for real media
+
+**Implementation status:** tuning knobs are wired and validated; real-media parameter selection is intentionally still pending.
 
 Current choices:
 
@@ -171,9 +175,9 @@ Current choices:
 
 Validate before changing:
 
-- [ ] `max_sentence_silence`
-- [ ] `speech_noise_threshold`
-- [ ] semantic segmentation
+- [x] `max_sentence_silence` is configurable and range-validated
+- [x] `speech_noise_threshold` is optional and range-validated
+- [x] semantic/VAD segmentation mode is configurable
 - [ ] music-heavy scenes
 - [ ] very short Japanese utterances
 - [ ] overlapping speakers
@@ -183,10 +187,10 @@ Validate before changing:
 
 - [ ] collect a small private evaluation set
 - [ ] measure false-speech / hallucination behavior
-- [ ] add optional instant vocabulary / hotwords
-- [ ] names and recurring terms
+- [x] add optional instant vocabulary / hotwords
+- [x] names and recurring terms supported through instant/precompiled hotwords
 - [ ] explicit/informal Japanese vocabulary profile
-- [ ] never enable system sensitive-word filtering by default
+- [x] never enable system sensitive-word filtering by default
 
 ---
 
