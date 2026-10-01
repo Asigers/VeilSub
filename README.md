@@ -97,7 +97,7 @@ Then start the gateway:
 uvicorn app.main:app --reload --port 8000
 ```
 
-Current M0/P1 behavior:
+Current M0–M2 behavior:
 
 - PCM16 / 16 kHz / mono input
 - ~100 ms browser audio frames
@@ -118,6 +118,9 @@ Current M0/P1 behavior:
 - browser overlay keeps the previous final line plus the current segment
 - display modes: bilingual / translation only / source only
 - translation remains disabled unless `VEILSUB_TRANSLATION_PROVIDER=aliyun` is configured
+- Stop returns structured latency/usage metrics and the extension keeps the latest session summary
+- Qwen VAD/segmentation parameters are configurable without code changes
+- instant hotwords and precompiled vocabulary IDs are supported
 
 Official ASR docs:
 
@@ -163,3 +166,22 @@ Official docs:
 ## Current status
 
 The production provider is standardized on Alibaba Cloud. Core P1 reliability and M1 asynchronous translation are implemented; real-cloud validation remains intentionally deferred.
+
+
+## M2 metrics and ASR tuning
+
+The extension keeps the latest completed session metrics, including TTFS, final-ASR latency P50/P95, translation latency P50/P95, translation end-to-end latency, subtitle revision count, reconnect count, dropped audio, estimated ASR audio seconds, and translation characters.
+
+The ASR tuning defaults intentionally remain close to Alibaba Cloud defaults:
+
+```env
+ALIYUN_ASR_SEMANTIC_PUNCTUATION_ENABLED=false
+ALIYUN_ASR_MAX_SENTENCE_SILENCE_MS=1300
+ALIYUN_ASR_MULTI_THRESHOLD_MODE_ENABLED=false
+ALIYUN_ASR_SPEECH_NOISE_THRESHOLD=
+
+ALIYUN_ASR_VOCABULARY={}
+ALIYUN_ASR_VOCABULARY_ID=
+```
+
+See `docs/asr-tuning.md` before changing these parameters. The project does not ship a hard-coded sensitive-content vocabulary; deployments can supply domain-specific hotwords through configuration.
