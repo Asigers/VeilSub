@@ -217,7 +217,9 @@
     const host = document.getElementById(ROOT_ID);
     overlayVisible = false;
     clearExpiry();
-    clearPendingSubtitleTimers();
+    if (remove) {
+      clearPendingSubtitleTimers();
+    }
     if (!host) return;
 
     if (typeof host.hidePopover === 'function' && host.matches(':popover-open')) {
