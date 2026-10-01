@@ -80,6 +80,22 @@ async function setCaptureState(state) {
   return next;
 }
 
+async function storedCaptureConfig() {
+  const saved = await chrome.storage.local.get([
+    'gateway',
+    'sourceLanguage',
+    'targetLanguage',
+    'displayMode',
+  ]);
+
+  return {
+    gateway: saved.gateway || 'ws://127.0.0.1:8000/v1/live',
+    sourceLanguage: saved.sourceLanguage || 'ja-JP',
+    targetLanguage: saved.targetLanguage || 'zh-CN',
+    displayMode: saved.displayMode || 'bilingual',
+  };
+}
+
 async function activeTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('No active tab');
@@ -338,4 +354,21 @@ chrome.tabCapture.onStatusChanged.addListener((info) => {
       failCapturedSession('Tab capture stopped unexpectedly.').catch(console.error);
     }
   });
+});
+
+
+chrome.commands.onCommand.addListener((command) => {
+  if (command !== 'toggle-subtitles') return;
+
+  getCaptureState()
+    .then(async (state) => {
+      if (['starting', 'capturing', 'reconnecting', 'stopping'].includes(state.status)) {
+        await stopCapture();
+        return;
+      }
+
+      const config = await storedCaptureConfig();
+      await startCapture(config);
+    })
+    .catch(console.error);
 });
