@@ -27,6 +27,7 @@ jobs:
         with:
           node-version: '22'
       - run: |
+          node -e "JSON.parse(require('fs').readFileSync('apps/extension/manifest.json', 'utf8'))"
           node --check apps/extension/src/background.js
           node --check apps/extension/src/offscreen.js
           node --check apps/extension/src/content.js
