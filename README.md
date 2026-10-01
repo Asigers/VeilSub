@@ -117,6 +117,8 @@ Current M0–M2 behavior:
 - per-session translation cache, timeout, concurrency limit and QPS guard are implemented
 - browser overlay keeps the previous final line plus the current segment
 - display modes: bilingual / translation only / source only
+- live controls for font size, vertical position, background opacity, and 0–3000 ms subtitle delay
+- Start/Stop keyboard command: Ctrl+Shift+Y (macOS: Command+Shift+Y), remappable in Chrome extension shortcuts
 - translation remains disabled unless `VEILSUB_TRANSLATION_PROVIDER=aliyun` is configured
 - Stop returns structured latency/usage metrics and the extension keeps the latest session summary
 - Qwen VAD/segmentation parameters are configurable without code changes
