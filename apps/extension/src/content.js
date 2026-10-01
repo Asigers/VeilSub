@@ -6,24 +6,76 @@
   const MAX_HISTORY = 50;
   const MAX_VISIBLE_SEGMENTS = 2;
   const FINAL_EXPIRY_MS = 6500;
+  const SETTINGS_KEYS = [
+    'displayMode',
+    'fontSize',
+    'verticalPosition',
+    'backgroundOpacity',
+    'subtitleDelayMs',
+  ];
+
+  const settings = {
+    displayMode: 'bilingual',
+    fontSize: 21,
+    verticalPosition: 9,
+    backgroundOpacity: 72,
+    subtitleDelayMs: 0,
+  };
 
   let overlayVisible = false;
-  let displayMode = 'bilingual';
   let expiryTimer = null;
 
   const segments = new Map();
   const segmentOrder = [];
+  const pendingSubtitleTimers = new Set();
 
-  chrome.storage.local.get('displayMode').then((saved) => {
-    displayMode = saved.displayMode || 'bilingual';
+  chrome.storage.local.get(SETTINGS_KEYS).then((saved) => {
+    Object.assign(settings, normalizeSettings(saved));
+    applySettings();
     renderSegments();
   });
 
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'local' || !changes.displayMode) return;
-    displayMode = changes.displayMode.newValue || 'bilingual';
+    if (areaName !== 'local') return;
+
+    let changed = false;
+    for (const key of SETTINGS_KEYS) {
+      if (!changes[key]) continue;
+      settings[key] = normalizeSetting(key, changes[key].newValue);
+      changed = true;
+    }
+
+    if (!changed) return;
+    applySettings();
     renderSegments();
   });
+
+  function normalizeSettings(values) {
+    const normalized = {};
+    for (const key of SETTINGS_KEYS) {
+      if (values[key] !== undefined) {
+        normalized[key] = normalizeSetting(key, values[key]);
+      }
+    }
+    return normalized;
+  }
+
+  function normalizeSetting(key, value) {
+    if (key === 'displayMode') {
+      return ['bilingual', 'translation', 'source'].includes(value)
+        ? value
+        : 'bilingual';
+    }
+
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return settings[key];
+
+    if (key === 'fontSize') return Math.min(36, Math.max(14, numeric));
+    if (key === 'verticalPosition') return Math.min(40, Math.max(3, numeric));
+    if (key === 'backgroundOpacity') return Math.min(95, Math.max(20, numeric));
+    if (key === 'subtitleDelayMs') return Math.min(3000, Math.max(0, numeric));
+    return value;
+  }
 
   function createOverlay() {
     let host = document.getElementById(ROOT_ID);
@@ -37,11 +89,15 @@
     shadow.innerHTML = `
       <style>
         :host {
+          --veilsub-target-size: 21px;
+          --veilsub-source-size: 17px;
+          --veilsub-bottom: 9vh;
+          --veilsub-bg-opacity: 0.72;
           position: fixed;
           left: 50%;
           right: auto;
           top: auto;
-          bottom: max(9vh, env(safe-area-inset-bottom, 0px));
+          bottom: max(var(--veilsub-bottom), env(safe-area-inset-bottom, 0px));
           transform: translateX(-50%);
           margin: 0;
           border: 0;
@@ -67,7 +123,7 @@
           max-width: min(900px, 88vw);
           padding: 10px 16px;
           border-radius: 10px;
-          background: rgba(0, 0, 0, 0.72);
+          background: rgba(0, 0, 0, var(--veilsub-bg-opacity));
           text-align: center;
           text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
           overflow-wrap: anywhere;
@@ -87,13 +143,13 @@
         }
 
         .source {
-          font-size: 17px;
+          font-size: var(--veilsub-source-size);
           line-height: 1.35;
         }
 
         .target {
           margin-top: 2px;
-          font-size: 21px;
+          font-size: var(--veilsub-target-size);
           font-weight: 650;
           line-height: 1.35;
         }
@@ -111,12 +167,13 @@
         }
       </style>
       <div class="panel">
-        <div class="lines"></div>
+        <div class="lines" role="status" aria-live="polite" aria-atomic="true"></div>
         <div class="status"></div>
       </div>
     `;
 
     document.documentElement.appendChild(host);
+    applySettings(host);
     return host;
   }
 
@@ -126,6 +183,20 @@
       lines: shadow.querySelector('.lines'),
       status: shadow.querySelector('.status'),
     };
+  }
+
+  function applySettings(host = document.getElementById(ROOT_ID)) {
+    if (!host) return;
+
+    const targetSize = Math.round(settings.fontSize);
+    const sourceSize = Math.max(12, Math.round(targetSize * 0.82));
+    host.style.setProperty('--veilsub-target-size', `${targetSize}px`);
+    host.style.setProperty('--veilsub-source-size', `${sourceSize}px`);
+    host.style.setProperty('--veilsub-bottom', `${settings.verticalPosition}vh`);
+    host.style.setProperty(
+      '--veilsub-bg-opacity',
+      String(settings.backgroundOpacity / 100)
+    );
   }
 
   function showOverlay() {
@@ -146,6 +217,7 @@
     const host = document.getElementById(ROOT_ID);
     overlayVisible = false;
     clearExpiry();
+    clearPendingSubtitleTimers();
     if (!host) return;
 
     if (typeof host.hidePopover === 'function' && host.matches(':popover-open')) {
@@ -205,7 +277,6 @@
       }
       next.target = event.target || '';
     } else {
-      // A newer source revision invalidates any translation of the older text.
       if (!existing || incomingRevision > existing.revision) {
         next.target = '';
       }
@@ -236,6 +307,7 @@
     const host = document.getElementById(ROOT_ID);
     if (!host) return;
 
+    applySettings(host);
     const { lines } = parts(host);
     lines.replaceChildren();
 
@@ -246,8 +318,8 @@
       row.className = index < visible.length - 1 ? 'segment previous' : 'segment';
       row.dataset.segmentId = segment.id;
 
-      const showSource = displayMode !== 'translation';
-      const showTarget = displayMode !== 'source';
+      const showSource = settings.displayMode !== 'translation';
+      const showTarget = settings.displayMode !== 'source';
 
       if (showSource && segment.source) {
         const source = document.createElement('div');
@@ -282,6 +354,13 @@
     }
   }
 
+  function clearPendingSubtitleTimers() {
+    for (const timer of pendingSubtitleTimers) {
+      clearTimeout(timer);
+    }
+    pendingSubtitleTimers.clear();
+  }
+
   function scheduleExpiry() {
     clearExpiry();
 
@@ -295,19 +374,32 @@
       const { lines } = parts(host);
       lines.replaceChildren();
 
-      // Keep the host available for connection/error status messages.
       if (!parts(host).status.textContent) {
         hideOverlay({ remove: false });
       }
     }, FINAL_EXPIRY_MS);
   }
 
-  function renderSubtitle(event) {
+  function renderSubtitleNow(event) {
     if (!event.type?.startsWith('subtitle.')) return;
 
     const host = createOverlay();
     parts(host).status.textContent = '';
     rememberSegment(event);
+  }
+
+  function renderSubtitle(event) {
+    const delayMs = settings.subtitleDelayMs;
+    if (delayMs <= 0) {
+      renderSubtitleNow(event);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      pendingSubtitleTimers.delete(timer);
+      renderSubtitleNow(event);
+    }, delayMs);
+    pendingSubtitleTimers.add(timer);
   }
 
   function renderState(state) {
