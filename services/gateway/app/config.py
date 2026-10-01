@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,10 +20,28 @@ class Settings(BaseSettings):
     aliyun_bailian_workspace_id: str = ""
     aliyun_bailian_region: Literal["cn-beijing", "ap-southeast-1"] = "cn-beijing"
     aliyun_asr_model: str = "qwen-audio-3.0-asr-flash-streaming"
+    aliyun_asr_semantic_punctuation_enabled: bool = False
+    aliyun_asr_max_sentence_silence_ms: int = 1300
+    aliyun_asr_multi_threshold_mode_enabled: bool = False
+    aliyun_asr_speech_noise_threshold: float | None = None
 
     alibaba_cloud_access_key_id: str = ""
     alibaba_cloud_access_key_secret: str = ""
     aliyun_mt_endpoint: str = "mt.cn-hangzhou.aliyuncs.com"
+
+    @field_validator("aliyun_asr_max_sentence_silence_ms")
+    @classmethod
+    def validate_max_sentence_silence(cls, value: int) -> int:
+        if not 200 <= value <= 6000:
+            raise ValueError("ALIYUN_ASR_MAX_SENTENCE_SILENCE_MS must be within 200..6000")
+        return value
+
+    @field_validator("aliyun_asr_speech_noise_threshold")
+    @classmethod
+    def validate_speech_noise_threshold(cls, value: float | None) -> float | None:
+        if value is not None and not -1.0 <= value <= 1.0:
+            raise ValueError("ALIYUN_ASR_SPEECH_NOISE_THRESHOLD must be within -1.0..1.0")
+        return value
 
 
 @lru_cache
