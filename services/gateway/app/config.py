@@ -1,12 +1,16 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra="ignore",
+        env_ignore_empty=True,
+    )
 
     veilsub_env: str = "development"
     veilsub_speech_provider: Literal["mock", "aliyun"] = "mock"
@@ -24,6 +28,8 @@ class Settings(BaseSettings):
     aliyun_asr_max_sentence_silence_ms: int = 1300
     aliyun_asr_multi_threshold_mode_enabled: bool = False
     aliyun_asr_speech_noise_threshold: float | None = None
+    aliyun_asr_vocabulary_id: str = ""
+    aliyun_asr_vocabulary: dict[str, int] = Field(default_factory=dict)
 
     alibaba_cloud_access_key_id: str = ""
     alibaba_cloud_access_key_secret: str = ""
@@ -41,6 +47,25 @@ class Settings(BaseSettings):
     def validate_speech_noise_threshold(cls, value: float | None) -> float | None:
         if value is not None and not -1.0 <= value <= 1.0:
             raise ValueError("ALIYUN_ASR_SPEECH_NOISE_THRESHOLD must be within -1.0..1.0")
+        return value
+
+    @field_validator("aliyun_asr_vocabulary")
+    @classmethod
+    def validate_vocabulary(cls, value: dict[str, int]) -> dict[str, int]:
+        if len(value) > 2000:
+            raise ValueError("ALIYUN_ASR_VOCABULARY cannot contain more than 2000 hotwords")
+
+        super_hotwords = 0
+        for word, weight in value.items():
+            if not word.strip():
+                raise ValueError("ALIYUN_ASR_VOCABULARY contains an empty hotword")
+            if weight not in {1, 2, 3, 4, 5, 50}:
+                raise ValueError("hotword weights must be 1..5 or 50")
+            if weight == 50:
+                super_hotwords += 1
+
+        if super_hotwords > 50:
+            raise ValueError("ALIYUN_ASR_VOCABULARY supports at most 50 weight-50 hotwords")
         return value
 
 
