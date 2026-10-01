@@ -91,6 +91,10 @@ class AliyunSpeechStream(SpeechStream):
             recognition_options["speech_noise_threshold"] = (
                 self.settings.aliyun_asr_speech_noise_threshold
             )
+        if self.settings.aliyun_asr_vocabulary_id:
+            recognition_options["vocabulary_id"] = self.settings.aliyun_asr_vocabulary_id
+        if self.settings.aliyun_asr_vocabulary:
+            recognition_options["vocabulary"] = self.settings.aliyun_asr_vocabulary
 
         self._recognition = asr.Recognition(**recognition_options)
 
