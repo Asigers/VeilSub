@@ -4,8 +4,16 @@
   "name": "VeilSub",
   "version": "0.1.0",
   "description": "Live subtitles for anything you watch.",
-  "permissions": ["activeTab", "offscreen", "scripting", "storage", "tabCapture"],
-  "host_permissions": ["<all_urls>"],
+  "permissions": [
+    "activeTab",
+    "offscreen",
+    "scripting",
+    "storage",
+    "tabCapture"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
@@ -16,9 +24,22 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/content.js"
+      ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "commands": {
+    "toggle-subtitles": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
+      },
+      "description": "Start or stop VeilSub subtitles"
+    }
+  }
 }
