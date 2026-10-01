@@ -7,6 +7,8 @@ const DEFAULT_CAPTURE_STATE = {
   sessionId: null,
   reconnectAttempt: 0,
   droppedAudioMs: 0,
+  reconnectCount: 0,
+  lastMetrics: null,
 };
 
 let creatingOffscreen = null;
@@ -97,6 +99,7 @@ async function stopOffscreenCapture() {
   if (response && response.ok === false) {
     throw new Error(response.error || 'Failed to stop offscreen capture');
   }
+  return response || { ok: true, metrics: null };
 }
 
 async function stopCapture({ finalState = DEFAULT_CAPTURE_STATE, hide = true } = {}) {
@@ -111,13 +114,16 @@ async function stopCapture({ finalState = DEFAULT_CAPTURE_STATE, hide = true } =
     });
   }
 
-  await stopOffscreenCapture().catch(() => undefined);
+  const stopResponse = await stopOffscreenCapture().catch(() => null);
 
   if (hide) {
     await hideOverlay(capturedTabId);
   }
 
-  return setCaptureState(finalState);
+  return setCaptureState({
+    ...finalState,
+    lastMetrics: stopResponse?.metrics || current.lastMetrics || null,
+  });
 }
 
 async function startCapture(config) {
@@ -136,7 +142,9 @@ async function startCapture(config) {
     startedAt: Date.now(),
     sessionId: null,
     reconnectAttempt: 0,
+    reconnectCount: 0,
     droppedAudioMs: 0,
+    lastMetrics: existing.lastMetrics || null,
   });
 
   try {
@@ -234,6 +242,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         error: null,
         sessionId: message.sessionId ?? current.sessionId,
         reconnectAttempt: message.reconnectAttempt ?? current.reconnectAttempt,
+        reconnectCount: message.reconnectCount ?? current.reconnectCount,
       }).catch(console.error);
     });
     return undefined;
@@ -245,6 +254,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       setCaptureState({
         ...current,
         droppedAudioMs: message.droppedAudioMs ?? current.droppedAudioMs,
+        reconnectCount: message.reconnectCount ?? current.reconnectCount,
+      }).catch(console.error);
+    });
+    return undefined;
+  }
+
+  if (message.type === 'offscreen.capture.metrics') {
+    getCaptureState().then((current) => {
+      if (current.tabId !== message.tabId) return;
+      setCaptureState({
+        ...current,
+        lastMetrics: message.metrics || current.lastMetrics,
       }).catch(console.error);
     });
     return undefined;
