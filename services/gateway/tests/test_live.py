@@ -185,8 +185,8 @@ def test_graceful_stop_flushes_final_subtitle(monkeypatch) -> None:
     assert final["source"] == "最後の字幕"
     assert final["id"] == f"{ready['session_id']}:flush-1"
     assert stopped["type"] == "session.stopped"
-    assert stopped["translation_calls"] == 0
-    assert stopped["translation_characters"] == 0
+    assert stopped["metrics"]["translation_calls"] == 0
+    assert stopped["metrics"]["translation_characters"] == 0
     assert speech.closed is True
 
 
@@ -229,8 +229,8 @@ def test_slow_translation_does_not_block_next_asr_event(monkeypatch) -> None:
     assert translation["target"] == "第一句"
 
     assert stopped["type"] == "session.stopped"
-    assert stopped["translation_calls"] == 1
-    assert stopped["translation_characters"] == len("第一文です")
+    assert stopped["metrics"]["translation_calls"] == 1
+    assert stopped["metrics"]["translation_characters"] == len("第一文です")
 
 
 
