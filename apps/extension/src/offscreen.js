@@ -94,6 +94,11 @@ async function closeGateway({ graceful = false } = {}) {
     });
 
     try {
+      ws.send(JSON.stringify({
+        type: 'client.stats',
+        reconnect_count: reconnectCount,
+        dropped_audio_ms: Math.round(droppedAudioMs),
+      }));
       ws.send(JSON.stringify({ type: 'session.stop' }));
       await Promise.race([stopped, delay(STOP_ACK_TIMEOUT_MS)]);
     } catch (_) {
