@@ -11,8 +11,10 @@ import androidx.core.app.ActivityCompat
 import com.veilsub.android.notification.CaptureNotification
 import com.veilsub.android.state.CaptureSessionStore
 import com.veilsub.android.state.CaptureStatus
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -23,6 +25,10 @@ class SubtitleCaptureService : Service() {
     private var projectionSession: MediaProjectionSession? = null
     private var playbackCapture: PlaybackAudioCapture? = null
     private var totalPcm16kBytes = 0L
+    private var startupJob: Job? = null
+    @Volatile
+    private var captureGeneration = 0L
+    @Volatile
     private var shuttingDown = false
 
     override fun onCreate() {
@@ -45,7 +51,13 @@ class SubtitleCaptureService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun startCapture(intent: Intent) {
-        if (projectionSession != null || playbackCapture != null) return
+        if (
+            startupJob?.isActive == true ||
+            projectionSession != null ||
+            playbackCapture != null
+        ) {
+            return
+        }
 
         if (
             ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -68,31 +80,49 @@ class SubtitleCaptureService : Service() {
             return
         }
 
-        serviceScope.launch {
-            runCatching {
-                val projection = MediaProjectionSession(
+        shuttingDown = false
+        val generation = ++captureGeneration
+
+        startupJob = serviceScope.launch {
+            var localProjection: MediaProjectionSession? = null
+            var localCapture: PlaybackAudioCapture? = null
+
+            try {
+                localProjection = MediaProjectionSession(
                     context = this@SubtitleCaptureService,
                     resultCode = resultCode,
                     resultData = resultData,
                     onRevoked = ::onProjectionRevoked,
                 )
-                projectionSession = projection
+                if (!isCurrentGeneration(generation)) {
+                    localProjection.close()
+                    return@launch
+                }
+                projectionSession = localProjection
 
-                val capture = PlaybackAudioCapture(projection.projection)
-                playbackCapture = capture
+                localCapture = PlaybackAudioCapture(localProjection.projection)
+                if (!isCurrentGeneration(generation)) {
+                    localProjection.close()
+                    return@launch
+                }
+                playbackCapture = localCapture
                 totalPcm16kBytes = 0
 
-                capture.start(
+                localCapture.start(
                     scope = serviceScope,
                     onPcm16kFrame = { frame ->
+                        if (!isCurrentGeneration(generation)) return@start
+
                         totalPcm16kBytes += frame.size
                         CaptureSessionStore.updateAudioStats(
                             bytesCaptured = totalPcm16kBytes,
-                            inputSampleRateHz = capture.inputSampleRateHz,
+                            inputSampleRateHz = localCapture.inputSampleRateHz,
                         )
                         // A2 sends this exact 16 kHz mono PCM16 frame to GatewayClient.
                     },
                     onFailure = { error ->
+                        if (!isCurrentGeneration(generation)) return@start
+
                         CaptureSessionStore.fail(
                             error.message ?: "Playback audio capture failed.",
                         )
@@ -100,17 +130,38 @@ class SubtitleCaptureService : Service() {
                     },
                 )
 
+                if (!isCurrentGeneration(generation)) {
+                    localCapture.stop()
+                    localProjection.close()
+                    return@launch
+                }
+
                 CaptureSessionStore.transition(
                     CaptureStatus.AUDIO_CAPTURE_READY,
                     "Playback PCM capture active. Gateway integration is the next A2 step.",
                 )
-            }.onFailure { error ->
-                CaptureSessionStore.fail(
-                    error.message ?: "Could not start playback audio capture.",
-                )
-                stopCapture(userInitiated = false)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (isCurrentGeneration(generation)) {
+                    CaptureSessionStore.fail(
+                        error.message ?: "Could not start playback audio capture.",
+                    )
+                    stopCapture(userInitiated = false)
+                } else {
+                    localCapture?.stop()
+                    localProjection?.close()
+                }
+            } finally {
+                if (captureGeneration == generation) {
+                    startupJob = null
+                }
             }
         }
+    }
+
+    private fun isCurrentGeneration(generation: Long): Boolean {
+        return !shuttingDown && captureGeneration == generation
     }
 
     private fun startProjectionForeground() {
@@ -131,6 +182,9 @@ class SubtitleCaptureService : Service() {
     private fun stopCapture(userInitiated: Boolean) {
         if (shuttingDown) return
         shuttingDown = true
+        captureGeneration += 1
+        startupJob?.cancel()
+        startupJob = null
 
         if (userInitiated) {
             runCatching { CaptureSessionStore.transition(CaptureStatus.STOPPING) }
@@ -154,6 +208,9 @@ class SubtitleCaptureService : Service() {
     }
 
     override fun onDestroy() {
+        captureGeneration += 1
+        startupJob?.cancel()
+        startupJob = null
         playbackCapture?.stop()
         playbackCapture = null
         projectionSession?.close()
