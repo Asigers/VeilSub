@@ -17,7 +17,10 @@ class MediaProjectionSession(
     private val manager =
         context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-    val projection: MediaProjection = manager.getMediaProjection(resultCode, resultData)
+    val projection: MediaProjection =
+        requireNotNull(manager.getMediaProjection(resultCode, resultData)) {
+            "Android did not return a MediaProjection instance."
+        }
 
     private var closing = false
     private val callback = object : MediaProjection.Callback() {
