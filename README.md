@@ -75,6 +75,16 @@ curl http://127.0.0.1:8000/health
 5. Open a page that is playing audio.
 6. Click VeilSub -> **Start subtitles**.
 
+## Real-cloud validation (no mock)
+
+See [真实阿里云端到端验证](docs/real-cloud-validation.md) for account activation,
+least-privilege credentials, real Japanese audio smoke testing, browser acceptance checks,
+and troubleshooting. From `services/gateway`, `python scripts/cloud_smoke.py --check-config`
+performs an offline configuration check; live testing requires a real PCM16/16 kHz/mono
+WAV and explicit `--allow-paid`. The script rejects mock providers and requires actual
+final subtitles (and matching translations unless `--asr-only`) before reporting success.
+A healthy Gateway alone does not prove cloud authentication or inference works.
+
 ## Real ASR with Alibaba Cloud Bailian
 
 Create a Model Studio / Bailian API key and obtain the workspace ID for the same region.
@@ -106,8 +116,11 @@ Current M0–M2 behavior:
 - final sentence keeps the same logical segment ID
 - heartbeat is enabled for long silent periods
 - sensitive-word filtering is not enabled
-- graceful Stop waits for the final ASR flush
-- Gateway disconnects trigger up to 5 bounded exponential-backoff reconnect attempts
+- graceful Stop waits for the final ASR flush and translations, with a bounded 35 s client fallback
+- audio format is strictly validated; gateway startup/write/close/drain operations have timeouts
+- capture tokens isolate late startup completions, PCM frames and messages from old sessions
+- Gateway transport disconnects trigger at most 5 exponential-backoff reconnect attempts per capture
+- explicit Gateway session errors are displayed and stop capture unless marked retryable; readiness does not reset retries
 - audio is dropped instead of queued when disconnected or WebSocket backpressure exceeds 64 KiB
 - dropped-audio duration is tracked in extension session state
 - runtime content-script injection recovers tabs opened before an extension reload
@@ -169,6 +182,15 @@ Official docs:
 
 The production provider is standardized on Alibaba Cloud. Core P1 reliability and M1 asynchronous translation are implemented; real-cloud validation remains intentionally deferred.
 
+
+## SDK lifecycle compatibility
+
+DashScope is pinned to `1.27.7`: its public `Recognition.stop()` uses an unbounded
+thread join and has no public transport-abort API. VeilSub isolates a version-specific
+bounded stop adapter to keep Gateway cleanup responsive and reject late results.
+A stalled underlying SDK network thread may nevertheless survive and delay process exit;
+this is not a guarantee of cloud transport cancellation. Upgrade the SDK only after
+revalidating this adapter. Machine Translation uses the asynchronous SDK with HTTP timeouts.
 
 ## M2 metrics and ASR tuning
 

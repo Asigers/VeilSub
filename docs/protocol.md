@@ -28,7 +28,9 @@ After that, clients send binary PCM16 little-endian audio frames, targeting abou
 ```json
 {
   "type": "session.ready",
-  "session_id": "..."
+  "session_id": "...",
+  "speech_provider": "aliyun",
+  "translation_provider": "aliyun"
 }
 ```
 
@@ -36,9 +38,16 @@ After that, clients send binary PCM16 little-endian audio frames, targeting abou
 {
   "type": "session.error",
   "code": "stream_failed",
-  "message": "..."
+  "message": "...",
+  "retryable": false
 }
 ```
+
+An explicit `session.error` is terminal unless `retryable` is explicitly `true`.
+Clients preserve its diagnostic message instead of replacing it with a generic reconnect
+status. Transport disconnects use a maximum of five reconnect attempts per capture;
+`session.ready` alone does not replenish that budget because cloud errors may arrive later.
+Error messages sent to clients and recorded by the Gateway redact configured credentials.
 
 A normal client stop is acknowledged only after ASR final-result flushing and pending translation work:
 
@@ -63,13 +72,17 @@ A normal client stop is acknowledged only after ASR final-result flushing and pe
     "translation_characters": 184,
     "translation_cache_hits": 2,
     "translation_timeouts": 0,
-    "translation_failures": 0
+    "translation_failures": 0,
+    "translation_last_error": null
   }
 }
 ```
 
-The client must not report capture success until `session.ready`, and should wait for
-`session.stopped` (with a short timeout fallback) before closing a normal session.
+The client must not report capture success until `session.ready`. Its provider fields
+identify the Gateway's effective configuration, not proof of successful cloud inference:
+ASR authentication errors can still arrive asynchronously after SDK startup.
+Clients should wait for `session.stopped` before closing a normal session; the extension
+uses a bounded 35-second fallback to cover ASR close and final/translation drain budgets.
 
 ## Subtitle events
 
@@ -187,3 +200,6 @@ The metrics object is diagnostic, not a cloud billing statement.
 - translation end-to-end latency: Gateway stream elapsed time minus the source sentence end offset when translated text is ready.
 - `estimated_asr_seconds`: PCM duration received by the Gateway; use provider billing reports for authoritative billing.
 - reconnect/drop metrics originate from the browser client and are sent through `client.stats`.
+- `translation_last_error` is the latest redacted translation diagnostic, or null;
+  failures/timeouts are logged without credentials and do not terminate ASR.
+- Alibaba `TranslateGeneral` business `Code` is checked even when HTTP status is 200.

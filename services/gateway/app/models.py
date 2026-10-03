@@ -5,8 +5,8 @@ from pydantic import BaseModel, Field
 
 class AudioConfig(BaseModel):
     encoding: Literal["linear16"] = "linear16"
-    sample_rate_hz: int = 16000
-    channels: int = 1
+    sample_rate_hz: Literal[16000] = 16000
+    channels: Literal[1] = 1
 
 
 class SessionStart(BaseModel):

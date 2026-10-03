@@ -174,6 +174,8 @@ def test_graceful_stop_flushes_final_subtitle(monkeypatch) -> None:
 
         ready = websocket.receive_json()
         assert ready["type"] == "session.ready"
+        assert ready["speech_provider"] == "mock"
+        assert ready["translation_provider"] == "none"
 
         websocket.send_text(json.dumps({"type": "session.stop"}))
 
@@ -267,3 +269,45 @@ def test_obsolete_translation_cannot_overwrite_new_revision(monkeypatch) -> None
     assert translation["type"] == "subtitle.translation"
     assert translation["revision"] == 2
     assert translation["target"] == "新翻译"
+
+
+def test_graceful_stop_orders_final_translation_then_stopped(monkeypatch) -> None:
+    from app.providers.mock import MockTranslator
+
+    speech = FlushOnCloseSpeechStream()
+    monkeypatch.setattr(
+        live, "get_settings", lambda: Settings(_env_file=None, veilsub_translation_provider="mock")
+    )
+    monkeypatch.setattr(live, "create_speech_stream", lambda settings: speech)
+    monkeypatch.setattr(live, "create_translator", lambda settings: MockTranslator())
+    with TestClient(app).websocket_connect("/v1/live") as websocket:
+        websocket.send_text(start_payload())
+        websocket.receive_json()
+        websocket.send_text('{"type":"session.stop"}')
+        terminal_events = [websocket.receive_json() for _ in range(3)]
+    assert [event["type"] for event in terminal_events] == [
+        "subtitle.final", "subtitle.translation", "session.stopped"
+    ]
+
+
+def test_translation_error_is_reported_on_stop_without_terminating_asr(monkeypatch) -> None:
+    class FailingTranslator(Translator):
+        async def translate(self, text, **kwargs):
+            raise RuntimeError("Aliyun MT code 10009: Permission denied")
+
+    speech = FlushOnCloseSpeechStream()
+    monkeypatch.setattr(live, "get_settings", lambda: Settings(
+        _env_file=None, veilsub_translation_provider="mock",
+    ))
+    monkeypatch.setattr(live, "create_speech_stream", lambda settings: speech)
+    monkeypatch.setattr(live, "create_translator", lambda settings: FailingTranslator())
+    with TestClient(app).websocket_connect("/v1/live") as websocket:
+        websocket.send_text(start_payload())
+        websocket.receive_json()
+        websocket.send_text('{"type":"session.stop"}')
+        final = websocket.receive_json()
+        stopped = websocket.receive_json()
+    assert final["type"] == "subtitle.final"
+    assert stopped["type"] == "session.stopped"
+    assert stopped["metrics"]["translation_failures"] == 1
+    assert "10009" in stopped["metrics"]["translation_last_error"]

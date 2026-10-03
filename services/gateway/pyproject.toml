@@ -10,7 +10,7 @@ dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn[standard]>=0.35,<1",
   "pydantic-settings>=2.10,<3",
-  "dashscope>=1.23.1,<2",
+  "dashscope==1.27.7",
   "alibabacloud_alimt20181012>=1.1.0,<2",
   "alibabacloud_tea_openapi>=0.4,<1"
 ]

@@ -1,5 +1,6 @@
 const OFFSCREEN_DOCUMENT_PATH = 'src/offscreen.html';
 const DEFAULT_CAPTURE_STATE = {
+  captureToken: null,
   status: 'idle',
   tabId: null,
   error: null,
@@ -12,6 +13,19 @@ const DEFAULT_CAPTURE_STATE = {
 };
 
 let creatingOffscreen = null;
+let operation = 0;
+let activeToken;
+let stateQueue = Promise.resolve();
+
+function checkOperation(id) {
+  if (id !== operation) throw new Error('Capture operation cancelled');
+}
+
+function matchesCapture(state, message) {
+  return !!message.captureToken && message.captureToken === activeToken &&
+    state.captureToken === message.captureToken && state.tabId === message.tabId &&
+    ['starting', 'capturing', 'reconnecting', 'stopping'].includes(state.status);
+}
 
 async function ensureOffscreenDocument() {
   const offscreenUrl = chrome.runtime.getURL(OFFSCREEN_DOCUMENT_PATH);
@@ -38,7 +52,9 @@ async function ensureOffscreenDocument() {
 
 async function getCaptureState() {
   const stored = await chrome.storage.session.get('captureState');
-  return stored.captureState || { ...DEFAULT_CAPTURE_STATE };
+  const state = stored.captureState || { ...DEFAULT_CAPTURE_STATE };
+  if (activeToken === undefined) activeToken = state.captureToken;
+  return state;
 }
 
 async function ensureContentScript(tabId) {
@@ -57,27 +73,35 @@ async function ensureContentScript(tabId) {
 
 async function sendOverlayMessage(tabId, message) {
   if (!tabId) return;
-
+  const id = operation;
   try {
     await ensureContentScript(tabId);
+    if (id !== operation) return;
+    if (message.captureToken && message.type !== 'overlay.hide' &&
+        message.captureToken !== activeToken) return;
     await chrome.tabs.sendMessage(tabId, message);
   } catch (_) {
     // Restricted pages (chrome://, extension stores, etc.) cannot be scripted.
   }
 }
 
-async function setCaptureState(state) {
-  const next = { ...DEFAULT_CAPTURE_STATE, ...state };
-  await chrome.storage.session.set({ captureState: next });
-
-  if (next.tabId) {
-    await sendOverlayMessage(next.tabId, {
-      type: 'overlay.state',
-      state: next,
-    });
-  }
-
-  return next;
+function setCaptureState(state, id = operation) {
+  const task = stateQueue.then(async () => {
+    if (id !== operation) return getCaptureState();
+    const value = typeof state === 'function' ? state(await getCaptureState()) : state;
+    if (!value || id !== operation) return getCaptureState();
+    const next = { ...DEFAULT_CAPTURE_STATE, ...value };
+    await chrome.storage.session.set({ captureState: next });
+    if (id !== operation) return next;
+    if (next.tabId) {
+      await sendOverlayMessage(next.tabId, {
+        type: 'overlay.state', captureToken: next.captureToken, state: next,
+      });
+    }
+    return next;
+  });
+  stateQueue = task.catch(() => undefined);
+  return task;
 }
 
 async function storedCaptureConfig() {
@@ -102,15 +126,16 @@ async function activeTab() {
   return tab;
 }
 
-async function hideOverlay(tabId) {
-  await sendOverlayMessage(tabId, { type: 'overlay.hide' });
+async function hideOverlay(tabId, captureToken) {
+  await sendOverlayMessage(tabId, { type: 'overlay.hide', captureToken });
 }
 
-async function stopOffscreenCapture() {
+async function stopOffscreenCapture(captureToken) {
   await ensureOffscreenDocument();
   const response = await chrome.runtime.sendMessage({
     target: 'offscreen',
     type: 'offscreen.capture.stop',
+    captureToken,
   });
   if (response && response.ok === false) {
     throw new Error(response.error || 'Failed to stop offscreen capture');
@@ -119,105 +144,85 @@ async function stopOffscreenCapture() {
 }
 
 async function stopCapture({ finalState = DEFAULT_CAPTURE_STATE, hide = true } = {}) {
+  const id = ++operation;
+  const token = activeToken;
   const current = await getCaptureState();
+  checkOperation(id);
   const capturedTabId = current.tabId;
-
   if (current.status !== 'idle') {
-    await setCaptureState({
-      ...current,
-      status: 'stopping',
-      error: null,
-    });
+    await setCaptureState({ ...current, status: 'stopping', error: null }, id);
+    checkOperation(id);
   }
-
-  const stopResponse = await stopOffscreenCapture().catch(() => null);
-
-  if (hide) {
-    await hideOverlay(capturedTabId);
-  }
-
+  const response = await stopOffscreenCapture(token || current.captureToken).catch(() => null);
+  checkOperation(id);
+  if (hide) await hideOverlay(capturedTabId, token || current.captureToken);
+  checkOperation(id);
+  activeToken = null;
   return setCaptureState({
-    ...finalState,
-    lastMetrics: stopResponse?.metrics || current.lastMetrics || null,
-  });
+    ...finalState, lastMetrics: response?.metrics || current.lastMetrics || null,
+  }, id);
 }
 
 async function startCapture(config) {
-  const existing = await getCaptureState();
-  if (existing.status !== 'idle') {
-    await stopCapture();
-  }
-
-  const tab = await activeTab();
-  await ensureContentScript(tab.id);
-
-  const startingState = await setCaptureState({
-    status: 'starting',
-    tabId: tab.id,
-    error: null,
-    startedAt: Date.now(),
-    sessionId: null,
-    reconnectAttempt: 0,
-    reconnectCount: 0,
-    droppedAudioMs: 0,
-    lastMetrics: existing.lastMetrics || null,
-  });
-
+  const id = ++operation;
+  const token = crypto.randomUUID();
+  const oldToken = activeToken;
+  activeToken = token;
+  let tab = null;
   try {
-    await ensureOffscreenDocument();
-    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
-
-    await sendOverlayMessage(tab.id, {
-      type: 'overlay.show',
-      state: startingState,
-    });
-
-    const response = await chrome.runtime.sendMessage({
-      target: 'offscreen',
-      type: 'offscreen.capture.start',
-      streamId,
-      tabId: tab.id,
-      config,
-    });
-
-    if (!response?.ok) {
-      throw new Error(response?.error || 'VeilSub capture failed to start');
+    const existing = await getCaptureState();
+    checkOperation(id);
+    if (existing.status !== 'idle') {
+      await stopOffscreenCapture(oldToken || existing.captureToken).catch(() => undefined);
+      checkOperation(id);
+      await hideOverlay(existing.tabId, oldToken || existing.captureToken);
+      checkOperation(id);
     }
-
-    return setCaptureState({
-      ...startingState,
-      status: 'capturing',
-      sessionId: response.sessionId || null,
+    tab = await activeTab();
+    checkOperation(id);
+    await ensureContentScript(tab.id);
+    checkOperation(id);
+    const startingState = await setCaptureState({
+      captureToken: token, status: 'starting', tabId: tab.id,
+      startedAt: Date.now(), lastMetrics: existing.lastMetrics || null,
+    }, id);
+    checkOperation(id);
+    await ensureOffscreenDocument();
+    checkOperation(id);
+    const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id });
+    checkOperation(id);
+    await sendOverlayMessage(tab.id, {
+      type: 'overlay.show', captureToken: token, state: startingState,
     });
+    checkOperation(id);
+    const response = await chrome.runtime.sendMessage({
+      target: 'offscreen', type: 'offscreen.capture.start', captureToken: token,
+      streamId, tabId: tab.id, config,
+    });
+    checkOperation(id);
+    if (!response?.ok) throw new Error(response?.error || 'VeilSub capture failed to start');
+    return setCaptureState((latest) => latest.captureToken === token ? {
+      ...latest, status: 'capturing', sessionId: response.sessionId || null,
+    } : null, id);
   } catch (error) {
-    await stopOffscreenCapture().catch(() => undefined);
+    if (id !== operation) throw error;
+    await stopOffscreenCapture(token).catch(() => undefined);
+    checkOperation(id);
+    activeToken = null;
     await setCaptureState({
-      status: 'error',
-      tabId: tab.id,
-      error: error instanceof Error ? error.message : String(error),
-      startedAt: null,
-    });
+      captureToken: null, status: 'error', tabId: tab?.id || null, error: error.message,
+    }, id);
     throw error;
   }
 }
 
-async function failCapturedSession(message) {
+async function failCapturedSession(message, captureToken) {
+  const id = operation;
   const current = await getCaptureState();
-  const tabId = current.tabId;
-
-  await setCaptureState({
-    ...current,
-    status: 'stopping',
-    error: null,
-  });
-  await stopOffscreenCapture().catch(() => undefined);
-  await setCaptureState({
-    status: 'error',
-    tabId,
-    error: message,
-    startedAt: null,
-    droppedAudioMs: current.droppedAudioMs || 0,
-  });
+  if (id !== operation || current.captureToken !== captureToken || activeToken !== captureToken) return;
+  return stopCapture({ hide: false, finalState: {
+    ...current, status: 'error', error: message, startedAt: null, captureToken: null,
+  } });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -244,62 +249,46 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'offscreen.capture.error') {
-    failCapturedSession(message.error || 'Capture session failed').catch(console.error);
-    return undefined;
-  }
-
-  if (message.type === 'offscreen.capture.state') {
-    getCaptureState().then((current) => {
-      if (current.tabId !== message.tabId) return;
-      setCaptureState({
-        ...current,
-        status: message.status || current.status,
-        error: null,
-        sessionId: message.sessionId ?? current.sessionId,
-        reconnectAttempt: message.reconnectAttempt ?? current.reconnectAttempt,
-        reconnectCount: message.reconnectCount ?? current.reconnectCount,
-      }).catch(console.error);
-    });
-    return undefined;
-  }
-
-  if (message.type === 'offscreen.capture.stats') {
-    getCaptureState().then((current) => {
-      if (current.tabId !== message.tabId) return;
-      setCaptureState({
-        ...current,
-        droppedAudioMs: message.droppedAudioMs ?? current.droppedAudioMs,
-        reconnectCount: message.reconnectCount ?? current.reconnectCount,
-      }).catch(console.error);
-    });
-    return undefined;
-  }
-
-  if (message.type === 'offscreen.capture.metrics') {
-    getCaptureState().then((current) => {
-      if (current.tabId !== message.tabId) return;
-      setCaptureState({
-        ...current,
-        lastMetrics: message.metrics || current.lastMetrics,
-      }).catch(console.error);
-    });
-    return undefined;
-  }
-
-  if (message.type === 'subtitle.event' && message.tabId) {
-    sendOverlayMessage(message.tabId, {
-      type: 'overlay.subtitle',
-      event: message.event,
-    });
+  if (message.type?.startsWith('offscreen.capture.') || message.type === 'subtitle.event') {
+    const id = operation;
+    getCaptureState().then(async (current) => {
+      if (id !== operation || !matchesCapture(current, message)) return;
+      if (message.type === 'offscreen.capture.error') {
+        if (current.status !== 'stopping') {
+          await failCapturedSession(message.error || 'Capture session failed', message.captureToken);
+        }
+      } else if (message.type === 'subtitle.event') {
+        await sendOverlayMessage(message.tabId, {
+          type: 'overlay.subtitle', captureToken: message.captureToken, event: message.event,
+        });
+      } else if (message.type === 'offscreen.capture.state') {
+        if (current.status === 'stopping') return;
+        await setCaptureState((latest) => matchesCapture(latest, message) &&
+          latest.status !== 'stopping' ? {
+          ...latest, status: message.status || latest.status, error: null,
+          sessionId: message.sessionId ?? latest.sessionId,
+          reconnectAttempt: message.reconnectAttempt ?? latest.reconnectAttempt,
+        } : null, id);
+      } else if (message.type === 'offscreen.capture.stats') {
+        await setCaptureState((latest) => matchesCapture(latest, message) ? {
+          ...latest, droppedAudioMs: message.droppedAudioMs ?? latest.droppedAudioMs,
+          reconnectCount: message.reconnectCount ?? latest.reconnectCount,
+        } : null, id);
+      } else if (message.type === 'offscreen.capture.metrics') {
+        await setCaptureState((latest) => matchesCapture(latest, message) ? {
+          ...latest, lastMetrics: message.metrics || latest.lastMetrics,
+        } : null, id);
+      }
+    }).catch(console.error);
   }
 
   return undefined;
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const id = operation;
   getCaptureState().then((state) => {
-    if (state.tabId !== tabId) return;
+    if (id !== operation || state.tabId !== tabId) return;
     stopCapture({
       hide: false,
       finalState: {
@@ -313,8 +302,9 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.tabs.onReplaced.addListener((_addedTabId, removedTabId) => {
+  const id = operation;
   getCaptureState().then((state) => {
-    if (state.tabId !== removedTabId) return;
+    if (id !== operation || state.tabId !== removedTabId) return;
     stopCapture({
       hide: false,
       finalState: {
@@ -330,28 +320,31 @@ chrome.tabs.onReplaced.addListener((_addedTabId, removedTabId) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'complete') return;
 
+  const id = operation;
   getCaptureState().then(async (state) => {
-    if (state.tabId !== tabId) return;
+    if (id !== operation || state.tabId !== tabId) return;
 
     await sendOverlayMessage(tabId, {
       type: 'overlay.show',
+      captureToken: state.captureToken,
       state,
     });
   });
 });
 
 chrome.tabCapture.onStatusChanged.addListener((info) => {
+  const id = operation;
   getCaptureState().then((state) => {
-    if (state.tabId !== info.tabId) return;
+    if (id !== operation || state.tabId !== info.tabId) return;
     if (state.status === 'stopping' || state.status === 'idle') return;
 
     if (info.status === 'error') {
-      failCapturedSession('Chrome reported a tab-capture error.').catch(console.error);
+      failCapturedSession('Chrome reported a tab-capture error.', state.captureToken).catch(console.error);
       return;
     }
 
     if (info.status === 'stopped' && ['capturing', 'reconnecting'].includes(state.status)) {
-      failCapturedSession('Tab capture stopped unexpectedly.').catch(console.error);
+      failCapturedSession('Tab capture stopped unexpectedly.', state.captureToken).catch(console.error);
     }
   });
 });
@@ -360,14 +353,17 @@ chrome.tabCapture.onStatusChanged.addListener((info) => {
 chrome.commands.onCommand.addListener((command) => {
   if (command !== 'toggle-subtitles') return;
 
+  const id = operation;
   getCaptureState()
     .then(async (state) => {
+      if (id !== operation) return;
       if (['starting', 'capturing', 'reconnecting', 'stopping'].includes(state.status)) {
         await stopCapture();
         return;
       }
 
       const config = await storedCaptureConfig();
+      if (id !== operation) return;
       await startCapture(config);
     })
     .catch(console.error);

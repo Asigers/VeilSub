@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from app.config import Settings
 from app.providers.base import Translator
 from app.translation import TranslationService
 
@@ -83,3 +84,40 @@ async def test_translation_timeout_returns_no_target() -> None:
     assert result.target is None
     assert result.timed_out is True
     assert service.timeouts == 1
+    assert service.last_error == "Translation timed out after 0.01s"
+
+
+@pytest.mark.asyncio
+async def test_translation_failure_is_logged_and_redacted(caplog) -> None:
+    class FailingTranslator(Translator):
+        settings = Settings(_env_file=None,
+            alibaba_cloud_access_key_id="access-id-regression-only",
+            alibaba_cloud_access_key_secret="access-secret-regression-only",
+        )
+
+        async def translate(self, text, **kwargs):
+            raise RuntimeError("SignatureDoesNotMatch " + self.settings.alibaba_cloud_access_key_secret)
+
+    service = TranslationService(FailingTranslator(), timeout_seconds=1,
+                                 max_concurrency=1, max_qps=20, cache_size=0)
+    result = await service.translate("テスト", source_language="ja-JP", target_language="zh-CN")
+    assert result.target is None
+    assert service.failures == 1
+    assert "SignatureDoesNotMatch" in service.last_error
+    assert "access-secret-regression-only" not in service.last_error
+    assert "access-secret-regression-only" not in caplog.text
+    assert "SignatureDoesNotMatch" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_empty_translation_is_counted_as_failure() -> None:
+    class EmptyTranslator(Translator):
+        async def translate(self, text, **kwargs):
+            return None
+
+    service = TranslationService(EmptyTranslator(), timeout_seconds=1,
+                                 max_concurrency=1, max_qps=20, cache_size=0)
+    result = await service.translate("テスト", source_language="ja-JP", target_language="zh-CN")
+    assert result.target is None
+    assert service.failures == 1
+    assert service.last_error == "Translation provider returned an empty result"

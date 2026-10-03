@@ -33,3 +33,4 @@ jobs:
           node --check apps/extension/src/content.js
           node --check apps/extension/src/popup.js
           node --check apps/extension/src/pcm-worklet.js
+      - run: node --test apps/extension/tests/*.test.cjs

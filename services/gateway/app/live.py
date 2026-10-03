@@ -1,11 +1,13 @@
 import asyncio
 import contextlib
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from app.config import get_settings
+from app.config import Settings, get_settings
+from app.errors import safe_error_message
 from app.metrics import SessionMetrics
 from app.models import SessionStart, SubtitleEvent
 from app.providers import create_speech_stream, create_translator
@@ -13,23 +15,22 @@ from app.subtitles import SubtitleStabilizer
 from app.translation import TranslationService
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+START_TIMEOUT = 10.0
+WRITE_TIMEOUT = 5.0
+CLOSE_TIMEOUT = 7.0
+FLUSH_TIMEOUT = 10.0
+SEND_TIMEOUT = 5.0
 
 
 @router.websocket("/v1/live")
 async def live_subtitles(websocket: WebSocket) -> None:
     await websocket.accept()
-    settings = get_settings()
-    speech = create_speech_stream(settings)
-    translator = create_translator(settings)
-    translation_enabled = settings.veilsub_translation_provider != "none"
-    translation = TranslationService(
-        translator,
-        timeout_seconds=settings.veilsub_translation_timeout_seconds,
-        max_concurrency=settings.veilsub_translation_max_concurrency,
-        max_qps=settings.veilsub_translation_max_qps,
-        cache_size=settings.veilsub_translation_cache_size,
-    )
-
+    speech = None
+    settings: Settings | None = None
+    session_id: str | None = None
     pump_task: asyncio.Task[None] | None = None
     receive_task: asyncio.Task[str] | None = None
     translation_tasks: dict[str, asyncio.Task[None]] = {}
@@ -40,14 +41,14 @@ async def live_subtitles(websocket: WebSocket) -> None:
 
     async def send_json(payload: dict[str, object]) -> None:
         async with send_lock:
-            await websocket.send_json(payload)
+            await asyncio.wait_for(websocket.send_json(payload), SEND_TIMEOUT)
 
     async def close_speech() -> None:
         nonlocal speech_closed
-        if speech_closed:
+        if speech_closed or speech is None:
             return
         speech_closed = True
-        await speech.close()
+        await asyncio.wait_for(speech.close(), CLOSE_TIMEOUT)
 
     async def cancel_translation_tasks() -> None:
         tasks = list(translation_tasks.values())
@@ -63,15 +64,40 @@ async def live_subtitles(websocket: WebSocket) -> None:
         tasks = list(translation_tasks.values())
         if not tasks:
             return
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), FLUSH_TIMEOUT
+        )
 
     try:
-        start = SessionStart.model_validate_json(await websocket.receive_text())
+        settings = get_settings()
+        speech = create_speech_stream(settings)
+        translator = create_translator(settings)
+        translation_enabled = settings.veilsub_translation_provider != "none"
+        translation = TranslationService(
+            translator,
+            timeout_seconds=settings.veilsub_translation_timeout_seconds,
+            max_concurrency=settings.veilsub_translation_max_concurrency,
+            max_qps=settings.veilsub_translation_max_qps,
+            cache_size=settings.veilsub_translation_cache_size,
+        )
+
+        start = SessionStart.model_validate_json(
+            await asyncio.wait_for(websocket.receive_text(), START_TIMEOUT)
+        )
         metrics = SessionMetrics(audio=start.audio)
-        await speech.start(language=start.source_language, audio=start.audio)
+        await asyncio.wait_for(
+            speech.start(language=start.source_language, audio=start.audio), START_TIMEOUT
+        )
 
         session_id = uuid.uuid4().hex
-        await send_json({"type": "session.ready", "session_id": session_id})
+        await send_json(
+            {
+                "type": "session.ready",
+                "session_id": session_id,
+                "speech_provider": settings.veilsub_speech_provider,
+                "translation_provider": settings.veilsub_translation_provider,
+            }
+        )
 
         stabilizer = SubtitleStabilizer()
 
@@ -175,11 +201,13 @@ async def live_subtitles(websocket: WebSocket) -> None:
         async def receive_audio() -> str:
             while True:
                 message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    raise WebSocketDisconnect(message.get("code", 1000))
                 if message.get("bytes") is not None:
                     chunk = message["bytes"]
                     if metrics is not None:
                         metrics.record_audio(len(chunk))
-                    await speech.write(chunk)
+                    await asyncio.wait_for(speech.write(chunk), WRITE_TIMEOUT)
                     continue
 
                 if message.get("text"):
@@ -205,7 +233,7 @@ async def live_subtitles(websocket: WebSocket) -> None:
             reason = await receive_task
             if reason == "stop":
                 await close_speech()
-                await pump_task
+                await asyncio.wait_for(pump_task, FLUSH_TIMEOUT)
                 await drain_translation_tasks()
                 metric_summary = (
                     metrics.summary(
@@ -221,35 +249,38 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 await send_json(
                     {
                         "type": "session.stopped",
-                        "metrics": metric_summary,
+                        "metrics": {
+                            **metric_summary,
+                            "translation_last_error": translation.last_error,
+                        },
                     }
                 )
                 return
 
         if pump_task in done:
             await pump_task
-            await drain_translation_tasks()
-            if receive_task and not receive_task.done():
-                receive_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await receive_task
+            raise RuntimeError("speech provider results ended before session.stop")
 
     except WebSocketDisconnect:
         await cancel_translation_tasks()
     except Exception as exc:  # noqa: BLE001
+        message = safe_error_message(exc, settings)
+        logger.warning(
+            "Live session %s failed (%s): %s",
+            session_id or "startup", type(exc).__name__, message,
+        )
         await cancel_translation_tasks()
         with contextlib.suppress(Exception):
             await send_json(
                 {
                     "type": "session.error",
                     "code": "stream_failed",
-                    "message": str(exc),
+                    "message": message,
+                    "retryable": False,
                 }
             )
     finally:
-        await close_speech()
-        await cancel_translation_tasks()
-
+        # Stop producers before cancelling translations so no new task escapes cleanup.
         for task in (receive_task, pump_task):
             if task is None:
                 continue
@@ -257,3 +288,10 @@ async def live_subtitles(websocket: WebSocket) -> None:
                 task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
+
+        await cancel_translation_tasks()
+        # Cleanup must continue even when provider close fails or times out.
+        with contextlib.suppress(Exception):
+            await close_speech()
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(websocket.close(), SEND_TIMEOUT)

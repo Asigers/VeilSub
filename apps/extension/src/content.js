@@ -23,6 +23,7 @@
   };
 
   let overlayVisible = false;
+  let captureToken = null;
   let expiryTimer = null;
 
   const segments = new Map();
@@ -202,6 +203,7 @@
   function showOverlay() {
     const host = createOverlay();
     overlayVisible = true;
+    host.style.display = 'block';
 
     if (typeof host.showPopover === 'function') {
       if (!host.matches(':popover-open')) {
@@ -244,7 +246,8 @@
     }
 
     requestAnimationFrame(() => {
-      if (overlayVisible && !host.matches(':popover-open')) {
+      if (overlayVisible && host.isConnected &&
+          document.getElementById(ROOT_ID) === host && !host.matches(':popover-open')) {
         host.showPopover();
       }
     });
@@ -397,8 +400,10 @@
       return;
     }
 
+    const token = captureToken;
     const timer = setTimeout(() => {
       pendingSubtitleTimers.delete(timer);
+      if (captureToken !== token || !token) return;
       renderSubtitleNow(event);
     }, delayMs);
     pendingSubtitleTimers.add(timer);
@@ -448,6 +453,17 @@
       return undefined;
     }
 
+    if (message.type === 'overlay.show' || message.type === 'overlay.state') {
+      const nextToken = message.state?.captureToken ?? message.captureToken ?? null;
+      if (nextToken !== captureToken) {
+        clearPendingSubtitleTimers();
+        clearExpiry();
+        segments.clear();
+        segmentOrder.length = 0;
+        captureToken = nextToken;
+      }
+    }
+
     if (message.type === 'overlay.show') {
       showOverlay();
       if (message.state) renderState(message.state);
@@ -455,6 +471,8 @@
     }
 
     if (message.type === 'overlay.hide') {
+      if (message.captureToken && message.captureToken !== captureToken) return undefined;
+      captureToken = null;
       segments.clear();
       segmentOrder.length = 0;
       hideOverlay();
@@ -467,6 +485,7 @@
     }
 
     if (message.type === 'overlay.subtitle') {
+      if (!captureToken || message.captureToken !== captureToken) return undefined;
       renderSubtitle(message.event);
     }
 

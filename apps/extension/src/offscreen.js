@@ -2,446 +2,323 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const BASE_RECONNECT_DELAY_MS = 500;
 const MAX_RECONNECT_DELAY_MS = 8000;
 const MAX_SOCKET_BUFFERED_BYTES = 64 * 1024;
-const STOP_ACK_TIMEOUT_MS = 5000;
+// Gateway stop can take close(7s) + result flush(10s) + translation drain(10s).
+const STOP_ACK_TIMEOUT_MS = 35_000;
 const SAMPLE_RATE_HZ = 16000;
 const BYTES_PER_SAMPLE = 2;
 
-let stream = null;
-let audioContext = null;
-let processor = null;
-let socket = null;
-let tabId = null;
-let activeConfig = null;
-let sessionReady = false;
-let stopping = false;
-let reconnectTask = null;
-let captureGeneration = 0;
-let droppedAudioMs = 0;
-let reconnectCount = 0;
-let lastStatsSentAt = 0;
-let stopAckResolver = null;
-let lastSessionMetrics = null;
+let activeCapture = null;
+let operation = 0;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function notifyCaptureError(error) {
+function current(capture) {
+  return activeCapture === capture && !capture.ended;
+}
+
+function requireStarting(capture) {
+  if (capture.failure) throw new Error(capture.failure);
+  if (!current(capture) || capture.stopping) throw new Error('Capture start cancelled');
+}
+
+async function notify(capture, type, extras = {}) {
+  if (!current(capture)) return;
   await chrome.runtime.sendMessage({
-    type: 'offscreen.capture.error',
-    error,
+    type, tabId: capture.tabId, captureToken: capture.token, ...extras,
   }).catch(() => undefined);
 }
 
-async function notifyCaptureState(status, extras = {}) {
-  if (!tabId) return;
-  await chrome.runtime.sendMessage({
-    type: 'offscreen.capture.state',
-    tabId,
-    status,
-    ...extras,
-  }).catch(() => undefined);
+function failCapture(capture, message) {
+  if (!current(capture) || capture.stopping || capture.failure) return;
+  capture.failure = message;
+  // Deliver the cause before cleanup ends this token; do not wait for the
+  // background handler to stop media or to suppress further reconnects.
+  notify(capture, 'offscreen.capture.error', { error: message }).catch(() => undefined);
+  cleanup(capture).catch(console.error);
 }
 
-async function publishStats(force = false) {
-  if (!tabId) return;
-
+async function publishStats(capture, force = false) {
+  if (!current(capture)) return;
   const now = Date.now();
-  if (!force && now - lastStatsSentAt < 1000) return;
-  lastStatsSentAt = now;
-
+  if (!force && now - capture.lastStatsSentAt < 1000) return;
+  capture.lastStatsSentAt = now;
   const stats = {
-    reconnectCount,
-    droppedAudioMs: Math.round(droppedAudioMs),
+    reconnectCount: capture.reconnectCount,
+    droppedAudioMs: Math.round(capture.droppedAudioMs),
   };
-
-  await chrome.runtime.sendMessage({
-    type: 'offscreen.capture.stats',
-    tabId,
-    ...stats,
-  }).catch(() => undefined);
-
-  if (sessionReady && socket?.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify({
-      type: 'client.stats',
-      reconnect_count: stats.reconnectCount,
+  await notify(capture, 'offscreen.capture.stats', stats);
+  const connection = capture.connection;
+  if (current(capture) && connection?.ready && connection.ws.readyState === WebSocket.OPEN) {
+    connection.ws.send(JSON.stringify({
+      type: 'client.stats', reconnect_count: stats.reconnectCount,
       dropped_audio_ms: stats.droppedAudioMs,
     }));
   }
 }
 
-function frameDurationMs(buffer) {
-  return (buffer.byteLength / BYTES_PER_SAMPLE / SAMPLE_RATE_HZ) * 1000;
-}
-
-function dropFrame(buffer) {
-  droppedAudioMs += frameDurationMs(buffer);
-  publishStats().catch(() => undefined);
-}
-
-async function closeGateway({ graceful = false } = {}) {
-  const ws = socket;
-  if (!ws) return null;
-
-  let stoppedPayload = null;
-
-  if (graceful && sessionReady && ws.readyState === WebSocket.OPEN) {
+async function closeGateway(capture, graceful) {
+  const connection = capture.connection;
+  if (!connection) return null;
+  const ws = connection.ws;
+  let payload = null;
+  if (graceful && connection.ready && ws.readyState === WebSocket.OPEN) {
     const stopped = new Promise((resolve) => {
-      stopAckResolver = (payload) => {
-        stoppedPayload = payload || null;
-        resolve();
-      };
+      connection.stopAck = (value) => { payload = value; resolve(); };
     });
-
+    let timer;
     try {
       ws.send(JSON.stringify({
-        type: 'client.stats',
-        reconnect_count: reconnectCount,
-        dropped_audio_ms: Math.round(droppedAudioMs),
+        type: 'client.stats', reconnect_count: capture.reconnectCount,
+        dropped_audio_ms: Math.round(capture.droppedAudioMs),
       }));
       ws.send(JSON.stringify({ type: 'session.stop' }));
-      await Promise.race([stopped, delay(STOP_ACK_TIMEOUT_MS)]);
+      await Promise.race([stopped, new Promise((resolve) => {
+        timer = setTimeout(resolve, STOP_ACK_TIMEOUT_MS);
+      })]);
     } catch (_) {
-      // A normal stop has a bounded wait; cleanup continues either way.
+      // Best-effort final flush, bounded by STOP_ACK_TIMEOUT_MS.
     } finally {
-      stopAckResolver = null;
+      clearTimeout(timer);
+      connection.stopAck = null;
     }
   }
-
-  if (socket === ws) {
-    socket = null;
-    sessionReady = false;
-  }
-
-  try {
-    ws.close();
-  } catch (_) {
-    // Ignore close races.
-  }
-
-  return stoppedPayload;
+  if (capture.connection === connection) capture.connection = null;
+  try { ws.close(); } catch (_) { /* Ignore close races. */ }
+  return payload;
 }
 
-async function cleanup({ graceful = false } = {}) {
-  captureGeneration += 1;
-  reconnectTask = null;
-
-  const stoppedPayload = await closeGateway({ graceful });
-  if (stoppedPayload?.metrics) {
-    lastSessionMetrics = stoppedPayload.metrics;
-    await chrome.runtime.sendMessage({
-      type: 'offscreen.capture.metrics',
-      tabId,
-      metrics: lastSessionMetrics,
-    }).catch(() => undefined);
-  }
-
-  processor?.disconnect();
-  processor = null;
-
-  stream?.getTracks().forEach((track) => track.stop());
-  stream = null;
-
-  await audioContext?.close().catch(() => undefined);
-  audioContext = null;
-
-  await publishStats(true);
-  tabId = null;
-  activeConfig = null;
-  return lastSessionMetrics;
+function cleanup(capture, graceful = false) {
+  if (!capture) return Promise.resolve(null);
+  if (capture.cleanupTask) return capture.cleanupTask;
+  capture.stopping = true;
+  capture.cleanupTask = (async () => {
+    const stopped = await closeGateway(capture, graceful);
+    if (stopped?.metrics) {
+      capture.metrics = stopped.metrics;
+      await notify(capture, 'offscreen.capture.metrics', { metrics: capture.metrics });
+    }
+    capture.processor?.disconnect();
+    capture.stream?.getTracks().forEach((track) => track.stop());
+    await capture.audioContext?.close().catch(() => undefined);
+    await publishStats(capture, true);
+    capture.ended = true;
+    if (activeCapture === capture) activeCapture = null;
+    return capture.metrics;
+  })();
+  return capture.cleanupTask;
 }
 
-async function stop() {
-  stopping = true;
-  try {
-    return await cleanup({ graceful: true });
-  } finally {
-    stopping = false;
-  }
+async function stop(token) {
+  // Even a pending getUserMedia startup is cancelled synchronously.
+  if (token && activeCapture && activeCapture.token !== token) return null;
+  operation += 1;
+  return cleanup(activeCapture, true);
 }
 
 function reconnectDelayMs(attempt) {
-  return Math.min(
-    BASE_RECONNECT_DELAY_MS * (2 ** Math.max(0, attempt - 1)),
-    MAX_RECONNECT_DELAY_MS
-  );
+  return Math.min(BASE_RECONNECT_DELAY_MS * (2 ** Math.max(0, attempt - 1)),
+    MAX_RECONNECT_DELAY_MS);
 }
 
-async function scheduleReconnect(reason, generation) {
-  if (stopping || generation !== captureGeneration || reconnectTask) return;
-
-  sessionReady = false;
-  reconnectCount += 1;
-  publishStats(true).catch(() => undefined);
-
-  reconnectTask = (async () => {
+function scheduleReconnect(capture, reason) {
+  if (!current(capture) || capture.stopping || capture.failure) return Promise.resolve();
+  if (capture.reconnectTask) {
+    capture.reconnectNeeded = true;
+    return capture.reconnectTask;
+  }
+  capture.reconnectNeeded = false;
+  capture.reconnectCount += 1;
+  publishStats(capture, true).catch(() => undefined);
+  const task = (async () => {
     let lastError = reason;
-
-    for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt += 1) {
-      if (stopping || generation !== captureGeneration) return;
-
-      await notifyCaptureState('reconnecting', {
-        reconnectAttempt: attempt,
+    // One budget per capture, not per close event. SDK startup can emit
+    // session.ready before cloud authentication fails, so ready alone must
+    // never replenish the retry budget.
+    while (capture.reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+      if (!current(capture) || capture.stopping) return;
+      const attempt = ++capture.reconnectAttempts;
+      await notify(capture, 'offscreen.capture.state', {
+        status: 'reconnecting', reconnectAttempt: attempt,
       });
+      if (!current(capture) || capture.stopping) return;
       await delay(reconnectDelayMs(attempt));
-
-      if (stopping || generation !== captureGeneration) return;
-
+      if (!current(capture) || capture.stopping) return;
       try {
-        const ready = await connectGatewayOnce(activeConfig, tabId, generation);
-        if (stopping || generation !== captureGeneration) return;
-
-        await notifyCaptureState('capturing', {
-          sessionId: ready.session_id || null,
-          reconnectAttempt: 0,
+        const ready = await connectGatewayOnce(capture);
+        if (!current(capture) || capture.stopping) return;
+        // A ready socket can close before this continuation executes.
+        if (!capture.connection?.ready) continue;
+        await notify(capture, 'offscreen.capture.state', {
+          status: 'capturing', sessionId: ready.session_id || null, reconnectAttempt: 0,
         });
         return;
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
       }
     }
+    if (current(capture) && !capture.stopping) {
+      capture.reconnectNeeded = false;
+      failCapture(capture,
+        `Gateway reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts: ${lastError}`);
 
-    if (!stopping && generation === captureGeneration) {
-      await notifyCaptureError(
-        `Gateway reconnect failed after ${MAX_RECONNECT_ATTEMPTS} attempts: ${lastError}`
-      );
     }
   })().finally(() => {
-    reconnectTask = null;
+    if (capture.reconnectTask !== task) return;
+    capture.reconnectTask = null;
+    if (current(capture) && !capture.stopping && capture.reconnectNeeded && !capture.connection) {
+      scheduleReconnect(capture, 'Gateway closed after readiness').catch(() => undefined);
+    }
   });
-
-  await reconnectTask;
+  capture.reconnectTask = task;
+  return task;
 }
 
-function connectGatewayOnce(config, currentTabId, generation) {
-  if (!config?.gateway) {
-    return Promise.reject(new Error('Gateway URL is missing'));
-  }
-
-  const ws = new WebSocket(config.gateway);
-  socket = ws;
-  sessionReady = false;
+function connectGatewayOnce(capture) {
+  requireStarting(capture);
+  if (!capture.config?.gateway) return Promise.reject(new Error('Gateway URL is missing'));
+  const ws = new WebSocket(capture.config.gateway);
+  const connection = { ws, ready: false, stopAck: null, failureReason: null };
+  capture.connection = connection;
   ws.binaryType = 'arraybuffer';
-
+  const ownsSocket = () => current(capture) && capture.connection === connection;
   return new Promise((resolve, reject) => {
     let settled = false;
-    let readyForThisSocket = false;
-
-    const timeout = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      try {
-        ws.close();
-      } catch (_) {
-        // Ignore close races.
-      }
-      reject(new Error('Gateway did not become ready within 10 seconds'));
-    }, 10_000);
-
     const rejectStartup = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
-      reject(error instanceof Error ? error : new Error(String(error)));
+      reject(error);
+      try { ws.close(); } catch (_) { /* Ignore close races. */ }
     };
-
+    const timeout = setTimeout(() => {
+      rejectStartup(new Error('Gateway did not become ready within 10 seconds'));
+      ws.close();
+    }, 10_000);
     ws.addEventListener('open', () => {
-      if (generation !== captureGeneration || stopping) {
-        ws.close();
-        return;
-      }
-
+      if (!ownsSocket() || capture.stopping) { ws.close(); return; }
       ws.send(JSON.stringify({
-        type: 'session.start',
-        source_language: config.sourceLanguage,
-        target_language: config.targetLanguage,
+        type: 'session.start', source_language: capture.config.sourceLanguage,
+        target_language: capture.config.targetLanguage,
         audio: { encoding: 'linear16', sample_rate_hz: SAMPLE_RATE_HZ, channels: 1 },
       }));
     });
-
     ws.addEventListener('message', (event) => {
+      // Keep the current socket's final subtitles and ACK during graceful stop.
+      if (!ownsSocket()) return;
       let payload;
-      try {
-        payload = JSON.parse(event.data);
-      } catch (_) {
-        return;
-      }
-
+      try { payload = JSON.parse(event.data); } catch (_) { return; }
       if (payload.type === 'session.ready') {
-        if (generation !== captureGeneration || socket !== ws) {
-          ws.close();
-          return;
-        }
-
-        readyForThisSocket = true;
-        sessionReady = true;
-
-        if (!settled) {
-          settled = true;
-          clearTimeout(timeout);
-          resolve(payload);
-        }
-        return;
-      }
-
-      if (payload.type === 'session.stopped') {
-        lastSessionMetrics = payload.metrics || null;
-        stopAckResolver?.(payload);
-        return;
-      }
-
-      if (payload.type === 'session.error') {
+        if (capture.stopping) return;
+        connection.ready = true;
+        if (!settled) { settled = true; clearTimeout(timeout); resolve(payload); }
+      } else if (payload.type === 'session.stopped') {
+        if (capture.stopping) connection.stopAck?.(payload);
+      } else if (payload.type === 'session.error') {
         const message = payload.message || 'Gateway session failed';
-
-        if (!readyForThisSocket) {
-          rejectStartup(new Error(message));
-          return;
+        const reason = payload.code ? `${payload.code}: ${message}` : message;
+        connection.failureReason = reason;
+        if (!connection.ready) rejectStartup(new Error(reason));
+        if (!capture.stopping && payload.retryable !== true) {
+          // Explicit server errors are terminal before or after readiness
+          // (e.g. credentials/configuration), including during a retry.
+          failCapture(capture, reason);
         }
-
-        try {
-          ws.close(1011, message.slice(0, 120));
-        } catch (_) {
-          ws.close();
-        }
-        return;
-      }
-
-      if (payload.type?.startsWith('subtitle.')) {
-        chrome.runtime.sendMessage({
-          type: 'subtitle.event',
-          tabId: currentTabId,
-          event: payload,
-        }).catch(() => undefined);
+        ws.close();
+      } else if (payload.type?.startsWith('subtitle.')) {
+        notify(capture, 'subtitle.event', { event: payload }).catch(() => undefined);
       }
     });
-
     ws.addEventListener('error', () => {
-      if (!readyForThisSocket) {
-        rejectStartup(new Error('Could not connect to the VeilSub gateway'));
-      }
+      if (!connection.ready) rejectStartup(new Error('Could not connect to the VeilSub gateway'));
     });
-
     ws.addEventListener('close', () => {
       clearTimeout(timeout);
-
-      if (socket === ws) {
-        socket = null;
-        sessionReady = false;
+      connection.stopAck?.(null); // Resolver belongs only to this socket.
+      if (!connection.ready) rejectStartup(new Error('Gateway connection closed before session.ready'));
+      if (!ownsSocket()) return;
+      capture.connection = null;
+      if (!capture.stopping && connection.ready) {
+        scheduleReconnect(capture, connection.failureReason || 'Gateway connection closed unexpectedly')
+          .catch(() => undefined);
       }
-
-      if (stopping || generation !== captureGeneration) {
-        stopAckResolver?.(null);
-        return;
-      }
-
-      if (!readyForThisSocket) {
-        rejectStartup(new Error('Gateway connection closed before session.ready'));
-        return;
-      }
-
-      scheduleReconnect('Gateway connection closed unexpectedly', generation)
-        .catch(() => undefined);
     });
   });
 }
 
-function handleAudioFrame(buffer) {
-  if (stopping) return;
-
-  if (
-    !sessionReady ||
-    socket?.readyState !== WebSocket.OPEN ||
-    socket.bufferedAmount > MAX_SOCKET_BUFFERED_BYTES
-  ) {
-    dropFrame(buffer);
+function handleAudioFrame(capture, buffer) {
+  if (!current(capture) || capture.stopping) return;
+  const connection = capture.connection;
+  if (!connection?.ready || connection.ws.readyState !== WebSocket.OPEN ||
+      connection.ws.bufferedAmount > MAX_SOCKET_BUFFERED_BYTES) {
+    capture.droppedAudioMs += (buffer.byteLength / BYTES_PER_SAMPLE / SAMPLE_RATE_HZ) * 1000;
+    publishStats(capture).catch(() => undefined);
     return;
   }
-
-  socket.send(buffer);
+  connection.ws.send(buffer);
 }
 
 async function start(message) {
-  await stop();
-
-  stopping = false;
-  captureGeneration += 1;
-  const generation = captureGeneration;
-
-  tabId = message.tabId;
-  activeConfig = message.config;
-  droppedAudioMs = 0;
-  reconnectCount = 0;
-  lastSessionMetrics = null;
-  lastStatsSentAt = 0;
-
+  const id = ++operation;
+  await cleanup(activeCapture);
+  if (id !== operation) throw new Error('Capture start cancelled');
+  const capture = {
+    token: message.captureToken, tabId: message.tabId, config: message.config,
+    stopping: false, ended: false, connection: null, reconnectTask: null,
+    reconnectNeeded: false, reconnectAttempts: 0, failure: null,
+    droppedAudioMs: 0, reconnectCount: 0,
+    lastStatsSentAt: 0, metrics: null,
+  };
+  activeCapture = capture;
   try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        mandatory: {
-          chromeMediaSource: 'tab',
-          chromeMediaSourceId: message.streamId,
-        },
-      },
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: message.streamId } },
       video: false,
     });
-
-    audioContext = new AudioContext({ sampleRate: SAMPLE_RATE_HZ });
-    await audioContext.audioWorklet.addModule('pcm-worklet.js');
-
-    const source = audioContext.createMediaStreamSource(stream);
-    processor = new AudioWorkletNode(audioContext, 'veilsub-pcm16');
-
-    // tabCapture removes captured audio from local playback; restore it.
-    source.connect(audioContext.destination);
+    if (!current(capture) || capture.stopping) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('Capture start cancelled');
+    }
+    capture.stream = stream;
+    const context = new AudioContext({ sampleRate: SAMPLE_RATE_HZ });
+    capture.audioContext = context;
+    await context.resume();
+    requireStarting(capture);
+    if (context.state !== 'running') throw new Error('AudioContext did not enter running state');
+    await context.audioWorklet.addModule('pcm-worklet.js');
+    requireStarting(capture);
+    const source = context.createMediaStreamSource(stream);
+    const processor = new AudioWorkletNode(context, 'veilsub-pcm16');
+    capture.processor = processor;
+    source.connect(context.destination);
     source.connect(processor);
-
-    const silent = audioContext.createGain();
+    const silent = context.createGain();
     silent.gain.value = 0;
-    processor.connect(silent).connect(audioContext.destination);
-    processor.port.onmessage = ({ data }) => handleAudioFrame(data);
-
-    const ready = await connectGatewayOnce(message.config, message.tabId, generation);
-    await publishStats(true);
+    processor.connect(silent).connect(context.destination);
+    processor.port.onmessage = ({ data }) => handleAudioFrame(capture, data);
+    const ready = await connectGatewayOnce(capture);
+    requireStarting(capture);
+    await publishStats(capture, true);
+    requireStarting(capture);
     return ready;
   } catch (error) {
-    stopping = true;
-    await cleanup({ graceful: false });
-    stopping = false;
+    await cleanup(capture);
     throw error;
   }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.target !== 'offscreen') return undefined;
-
   if (message.type === 'offscreen.capture.start') {
-    start(message)
-      .then((ready) => {
-        sendResponse({
-          ok: true,
-          sessionId: ready.session_id || null,
-        });
-      })
-      .catch((error) => {
-        sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    start(message).then((ready) => sendResponse({ ok: true, sessionId: ready.session_id || null }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
-
   if (message.type === 'offscreen.capture.stop') {
-    stop()
-      .then((metrics) => sendResponse({ ok: true, metrics }))
-      .catch((error) => {
-        sendResponse({
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    stop(message.captureToken).then((metrics) => sendResponse({ ok: true, metrics }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
-
   return undefined;
 });

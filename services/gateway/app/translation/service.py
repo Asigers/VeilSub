@@ -1,8 +1,13 @@
 import asyncio
+import logging
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 
+from app.config import Settings
+from app.errors import safe_error_message
 from app.providers.base import Translator
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +54,7 @@ class TranslationService:
         self.cache_hits = 0
         self.timeouts = 0
         self.failures = 0
+        self.last_error: str | None = None
 
     async def translate(
         self,
@@ -106,14 +112,21 @@ class TranslationService:
                     )
             except TimeoutError:
                 self.timeouts += 1
+                self.last_error = f"Translation timed out after {self.timeout_seconds:g}s"
+                logger.warning(self.last_error)
                 return TranslationResult(
                     target=None,
                     cache_hit=False,
                     timed_out=True,
                     latency_ms=(loop.time() - started_at) * 1000,
                 )
-            except Exception:  # noqa: BLE001
+            except Exception as exc:  # noqa: BLE001
                 self.failures += 1
+                settings = getattr(self.translator, "settings", None)
+                self.last_error = safe_error_message(
+                    exc, settings if isinstance(settings, Settings) else None,
+                )
+                logger.warning("Translation failed (%s): %s", type(exc).__name__, self.last_error)
                 return TranslationResult(
                     target=None,
                     cache_hit=False,
@@ -123,6 +136,9 @@ class TranslationService:
 
             latency_ms = (loop.time() - started_at) * 1000
             if not translated:
+                self.failures += 1
+                self.last_error = "Translation provider returned an empty result"
+                logger.warning(self.last_error)
                 return TranslationResult(
                     target=None,
                     cache_hit=False,

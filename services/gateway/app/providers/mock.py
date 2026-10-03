@@ -13,9 +13,12 @@ class MockSpeechStream(SpeechStream):
         self.segment = 0
 
     async def start(self, *, language: str, audio: AudioConfig) -> None:
+        AudioConfig.model_validate(audio.model_dump())
         self.bytes_per_result = audio.sample_rate_hz * audio.channels * 2
 
     async def write(self, chunk: bytes) -> None:
+        if self.bytes_per_result <= 0:
+            raise ValueError("audio frame size must be positive")
         self.bytes_seen += len(chunk)
         while self.bytes_seen >= self.bytes_per_result:
             self.bytes_seen -= self.bytes_per_result

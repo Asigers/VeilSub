@@ -15,10 +15,10 @@ class Settings(BaseSettings):
     veilsub_env: str = "development"
     veilsub_speech_provider: Literal["mock", "aliyun"] = "mock"
     veilsub_translation_provider: Literal["none", "mock", "aliyun"] = "none"
-    veilsub_translation_timeout_seconds: float = 2.5
-    veilsub_translation_max_concurrency: int = 4
-    veilsub_translation_max_qps: int = 20
-    veilsub_translation_cache_size: int = 256
+    veilsub_translation_timeout_seconds: float = Field(default=2.5, gt=0, allow_inf_nan=False)
+    veilsub_translation_max_concurrency: int = Field(default=4, ge=1)
+    veilsub_translation_max_qps: int = Field(default=20, ge=1)
+    veilsub_translation_cache_size: int = Field(default=256, ge=0)
 
     dashscope_api_key: str = ""
     aliyun_bailian_workspace_id: str = ""

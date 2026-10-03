@@ -44,14 +44,27 @@ function renderMetrics(data) {
   }
 
   metrics.style.display = 'block';
-  metrics.innerHTML = [
-    '<strong>Last session</strong>',
+  metrics.replaceChildren();
+  const heading = document.createElement('strong');
+  heading.textContent = 'Last session';
+  metrics.appendChild(heading);
+  const lines = [
     `TTFS: ${formatMetric(data.time_to_first_subtitle_ms)}`,
     `ASR final P50/P95: ${formatMetric(data.asr_final_latency_ms_p50)} / ${formatMetric(data.asr_final_latency_ms_p95)}`,
     `Translation P50/P95: ${formatMetric(data.translation_latency_ms_p50)} / ${formatMetric(data.translation_latency_ms_p95)}`,
+    `Translation calls: ${data.translation_calls ?? 0} · failures: ${data.translation_failures ?? 0} · timeouts: ${data.translation_timeouts ?? 0}`,
     `Dropped: ${formatMetric(data.dropped_audio_ms)} · reconnects: ${data.reconnect_count ?? 0}`,
     `Audio: ${data.estimated_asr_seconds ?? 0}s · translated chars: ${data.translation_characters ?? 0}`,
-  ].join('<br>');
+  ];
+  if (data.translation_last_error) {
+    lines.push(`Last translation error: ${data.translation_last_error}`);
+  }
+  for (const text of lines) {
+    const line = document.createElement('div');
+    // Provider diagnostics are text, never trusted HTML.
+    line.textContent = text;
+    metrics.appendChild(line);
+  }
 }
 
 function renderState(state) {
