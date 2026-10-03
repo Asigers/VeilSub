@@ -299,11 +299,60 @@ Current CI performs syntax checks only.
 
 ## 21. Android
 
-- [ ] native capture adapter
-- [ ] AudioPlaybackCapture / MediaProjection validation
+Detailed architecture: `docs/android-app-design.md`
+
+### A0 — Scaffold
+- [ ] create `apps/android`
+- [ ] Kotlin + Jetpack Compose
+- [ ] minSdk 29 / targetSdk 36
+- [ ] Android CI build
+- [ ] DataStore settings + capture state machine
+
+### A1 — Playback capture
+- [ ] MediaProjection permission flow
+- [ ] mediaProjection foreground service
+- [ ] AudioPlaybackCaptureConfiguration
+- [ ] AudioRecord playback capture
+- [ ] PCM16 / 16 kHz / mono conversion
+- [ ] MediaProjection.Callback cleanup
+- [ ] clear unsupported-source-app error
+
+### A2 — Gateway
+- [ ] OkHttp WebSocket client
 - [ ] reuse `/v1/live`
-- [ ] floating subtitle UI
-- [ ] lifecycle / battery / network testing
+- [ ] revision-aware subtitle parsing
+- [ ] reconnect / backpressure
+- [ ] graceful stop / metrics
+
+### A3 — Floating subtitles
+- [ ] SYSTEM_ALERT_WINDOW permission flow
+- [ ] TYPE_APPLICATION_OVERLAY
+- [ ] bilingual segment renderer
+- [ ] drag / lock position
+- [ ] persistent foreground notification + Stop action
+
+### A4 — Product UX
+- [ ] source / target languages
+- [ ] display modes
+- [ ] font / position / opacity / delay
+- [ ] permission guidance
+- [ ] in-app preview fallback
+- [ ] last-session metrics
+
+### A5 — Reliability
+- [ ] rotation / configuration changes
+- [ ] projection revoke
+- [ ] Wi-Fi / cellular transition
+- [ ] background / foreground lifecycle
+- [ ] OEM tests
+- [ ] 30+ minute Android run
+
+### A6 — Release
+- [ ] WSS production Gateway
+- [ ] no cloud credentials in APK
+- [ ] signed release build
+- [ ] Play Data Safety / privacy disclosures
+- [ ] target API 36 release checklist
 
 ## 22. iOS / iPadOS
 
