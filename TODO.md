@@ -302,20 +302,24 @@ Current CI performs syntax checks only.
 Detailed architecture: `docs/android-app-design.md`
 
 ### A0 — Scaffold
-- [ ] create `apps/android`
-- [ ] Kotlin + Jetpack Compose
-- [ ] minSdk 29 / targetSdk 36
-- [ ] Android CI build
-- [ ] DataStore settings + capture state machine
+- [x] create `apps/android`
+- [x] Kotlin + Jetpack Compose
+- [x] minSdk 29 / targetSdk 36
+- [x] Android CI build
+- [x] DataStore settings + capture state machine
 
 ### A1 — Playback capture
-- [ ] MediaProjection permission flow
-- [ ] mediaProjection foreground service
-- [ ] AudioPlaybackCaptureConfiguration
-- [ ] AudioRecord playback capture
-- [ ] PCM16 / 16 kHz / mono conversion
-- [ ] MediaProjection.Callback cleanup
-- [ ] clear unsupported-source-app error
+
+**Code status:** capture pipeline is implemented and Android CI builds/tests it. Real-device playback-capture validation is still required before A1 is accepted.
+
+- [x] MediaProjection permission flow
+- [x] mediaProjection foreground service
+- [x] AudioPlaybackCaptureConfiguration
+- [x] AudioRecord playback capture
+- [x] PCM16 / 16 kHz / mono conversion
+- [x] MediaProjection.Callback cleanup
+- [ ] distinguish / explain source apps that block playback capture on a real device
+- [ ] verify non-zero PCM from Chrome or another capturable media app on a real Android 10+ device
 
 ### A2 — Gateway
 - [ ] OkHttp WebSocket client
