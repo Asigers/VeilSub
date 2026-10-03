@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">VeilSub</string>
+    <string name="capture_channel_name">Live subtitles</string>
+    <string name="capture_notification_title">VeilSub</string>
+    <string name="capture_notification_text">Capturing playback audio for live subtitles</string>
+    <string name="stop">Stop</string>
+</resources>
