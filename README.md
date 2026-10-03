@@ -40,6 +40,7 @@ VeilSub intentionally uses **one production cloud stack only**: Alibaba Cloud.
 
 ```text
 apps/extension/         Chrome/Edge MV3 extension
+apps/android/           Native Android capture client
 services/gateway/       FastAPI WebSocket gateway
 docs/                   protocol and architecture decisions
 .github/workflows/      CI
@@ -170,6 +171,27 @@ Final source subtitles are shown immediately. The translated text arrives as a l
 Official docs:
 
 - https://help.aliyun.com/zh/machine-translation/developer-reference/api-alimt-2018-10-12-translategeneral
+
+## Android client
+
+The native Android client now lives in `apps/android`.
+
+Implemented so far:
+
+- Kotlin + Jetpack Compose, minSdk 29 / targetSdk 36
+- fresh MediaProjection consent flow for each Start
+- mediaProjection foreground service + persistent Stop notification
+- AudioPlaybackCaptureConfiguration + AudioRecord
+- MEDIA / GAME / UNKNOWN playback usages
+- 48 kHz / 44.1 kHz / 16 kHz input fallback
+- stateful PCM16 mono resampling to the existing 16 kHz Gateway contract
+- DataStore settings and validated capture state machine
+- startup-generation guard so a late asynchronous Start cannot resurrect a stopped capture
+- Android CI runs unit tests and assembleDebug
+
+A1 still requires a real Android device to verify non-zero PCM from a source app that permits playback capture. A2 will connect these PCM frames to the existing `/v1/live` Gateway.
+
+See `apps/android/README.md` and `docs/android-app-design.md`.
 
 ## Milestones
 
