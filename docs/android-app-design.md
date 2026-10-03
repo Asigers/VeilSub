@@ -1,7 +1,12 @@
 # VeilSub Android App Design
 
-Status: planned
+Status: implementation started
 Target milestone: M3
+Current implementation:
+- A0 scaffold: complete in code and CI
+- A1 playback capture: implemented in code; real-device validation pending
+- A2 Gateway integration: next
+
 Owner boundary: Android client only; reuse the existing VeilSub Gateway and WebSocket protocol.
 
 ## 1. Product goal
